@@ -1,13 +1,7 @@
 import { db } from '@/db/dexie';
 import { getCredentials, isCredentialsComplete } from '@/db/credentials';
 import { getAppSettings, saveAppSettings } from '@/db/settings';
-import {
-  ensureCloudDirs,
-  fetchFile,
-  propfindRecords,
-  putFileText,
-  withBackoff,
-} from '@/services/dav';
+import { getCloudStore, withBackoff, type CloudStore } from '@/services/cloud';
 import { fetchAndCacheMovie } from '@/services/tmdb';
 import { chunk, diffRemote } from './diff';
 import { mergeConfig, normalizeRemoteConfig, normalizeRemoteRecord } from './merge';
@@ -49,7 +43,7 @@ let running = false;
 
 /**
  * 一轮完整同步（先拉后推 + config 对账）。执行互斥：已在跑则直接返回 null。
- * 未配置凭据返回 null（调用方静默，不打扰）。
+ * 未配置云同步返回 null（调用方静默，不打扰）。
  */
 export async function runSync(): Promise<SyncSummary | null> {
   if (running) return null;
@@ -58,11 +52,11 @@ export async function runSync(): Promise<SyncSummary | null> {
 
   running = true;
   try {
-    await withBackoff(() => ensureCloudDirs());
+    const store = await getCloudStore();
     const summary: SyncSummary = { pushed: 0, pulled: 0, conflicts: 0 };
-    await pullPhase(summary);
-    await pushPhase(summary);
-    await configPhase();
+    await pullPhase(store, summary);
+    await pushPhase(store, summary);
+    await configPhase(store);
     await saveAppSettings({ lastSyncedAt: new Date().toISOString() });
     return summary;
   } finally {
@@ -70,21 +64,18 @@ export async function runSync(): Promise<SyncSummary | null> {
   }
 }
 
-/** 拉取：1 次 PROPFIND 清单 → 与底账 diff → 仅下载新增/变更（分批 + 退避） */
-async function pullPhase(summary: SyncSummary): Promise<void> {
-  const remote = await withBackoff(() => propfindRecords());
+/** 拉取：1 次清单 → 与底账 diff → 仅下载新增/变更（分批 + 退避） */
+async function pullPhase(store: CloudStore, summary: SyncSummary): Promise<void> {
+  const remote = await withBackoff(() => store.listRecords());
   const localStates = await db.syncStates.toArray();
-  const { toDownload } = diffRemote(
-    remote.filter((meta) => meta.file.startsWith('records/')),
-    localStates,
-  );
+  const { toDownload } = diffRemote(remote, localStates);
 
   const batches = chunk(toDownload, 20);
   for (const [index, batch] of batches.entries()) {
-    if (index > 0) await sleep(300); // 首次全量批间停顿，防打满 WebDAV 服务限额
+    if (index > 0) await sleep(300); // 首次全量批间停顿，防打满存储服务限额
     for (const meta of batch) {
       await withBackoff(async () => {
-        const fetched = await fetchFile(meta.file);
+        const fetched = await store.fetchFile(meta.file);
         if (!fetched.text) return; // 对方物理删除（协议内不会，防御）
         const record = normalizeRemoteRecord(safeJsonParse(fetched.text));
         if (!record) return; // 脏数据跳过，不炸整轮同步
@@ -111,8 +102,8 @@ async function pullPhase(summary: SyncSummary): Promise<void> {
   }
 }
 
-/** 推送：pending 逐条 PUT；412 → 标 conflict 等人工裁决 */
-async function pushPhase(summary: SyncSummary): Promise<void> {
+/** 推送：pending 逐条上传；412 → 标 conflict 等人工裁决 */
+async function pushPhase(store: CloudStore, summary: SyncSummary): Promise<void> {
   const pendingStates = await db.syncStates.filter((state) => state.status === 'pending').toArray();
   for (const state of pendingStates) {
     const record = await db.records.get(state.recordId);
@@ -123,7 +114,7 @@ async function pushPhase(summary: SyncSummary): Promise<void> {
     }
     const { file, ifMatch } = planPush(state, record);
     await withBackoff(async () => {
-      const result = await putFileText(file, JSON.stringify(record), ifMatch);
+      const result = await store.putFileText(file, JSON.stringify(record), ifMatch);
       if (result.conflict) {
         await db.syncStates.put({ ...state, status: 'conflict' });
         summary.conflicts++;
@@ -132,7 +123,7 @@ async function pushPhase(summary: SyncSummary): Promise<void> {
       await db.syncStates.put({
         recordId: state.recordId,
         cloudFile: file,
-        // PUT 响应缺 etag 时保留旧值 → 下轮 PROPFIND 会多 GET 一次自愈
+        // 上传响应缺 etag 时保留旧值 → 下轮清单比对会多拉一次自愈
         cloudEtag: result.etag ?? state.cloudEtag,
         status: 'synced',
       });
@@ -144,12 +135,12 @@ async function pushPhase(summary: SyncSummary): Promise<void> {
 /**
  * config.json 对账（members + customLocations，并集合并）：
  * 云端有本地没有的条目 → 写本地（liveQuery 自动刷 UI）；
- * 本地相对上次快照有变化、或云端有更新 → 整文件 PUT（If-Match），412 重拉并集重试一次。
+ * 本地相对上次快照有变化、或云端有更新 → 整文件上传（If-Match），412 重拉并集重试一次。
  */
-async function configPhase(): Promise<void> {
+async function configPhase(store: CloudStore): Promise<void> {
   const app = await getAppSettings();
   const local: CloudConfig = { members: app.members, customLocations: app.customLocations };
-  const fetched = await fetchFile('config.json');
+  const fetched = await store.fetchFile('config.json');
   const remote: CloudConfig | null = fetched.text
     ? normalizeRemoteConfig(safeJsonParse(fetched.text))
     : null;
@@ -173,27 +164,25 @@ async function configPhase(): Promise<void> {
   }
   if (!remoteExists && !localDirty) return; // 两边都空，无需上传
 
-  // 云端已有文件 → If-Match；新建（404）→ 无锁创建
+  // 云端已有文件 → If-Match；新建 → 无锁创建
   const ifMatch = remoteExists ? (fetched.etag ?? app.configEtag) : undefined;
-  let result = await putFileText('config.json', JSON.stringify(finalConfig), ifMatch);
+  let result = await store.putFileText('config.json', JSON.stringify(finalConfig), ifMatch);
   if (result.conflict) {
     // 对方刚改过：重拉 → 再并集 → 带新 etag 重试一次
-    const fresh = await fetchFile('config.json');
+    const fresh = await store.fetchFile('config.json');
     const freshRemote = fresh.text ? normalizeRemoteConfig(safeJsonParse(fresh.text)) : null;
     const retry = mergeConfig(finalConfig, freshRemote ?? { members: [], customLocations: [] });
     await saveAppSettings({
       members: retry.members,
       customLocations: retry.customLocations,
     });
-    result = await putFileText('config.json', JSON.stringify(retry), fresh.etag);
+    result = await store.putFileText('config.json', JSON.stringify(retry), fresh.etag);
     if (result.conflict) return; // 再冲突就留给下一轮（数据无损）
   }
   if (result.ok) {
     await saveAppSettings({
       configEtag: result.etag ?? fetched.etag,
-      configSyncedSnapshot: remoteHasNew
-        ? merged
-        : local,
+      configSyncedSnapshot: remoteHasNew ? merged : local,
     });
   }
 }

@@ -46,7 +46,7 @@ export default defineConfig({
       // 本地联调：先起 worker（wrangler dev，:8787），前端设置页 Worker 地址留空即同源
       '/tmdb': 'http://localhost:8787',
       '/image': 'http://localhost:8787',
-      '/dav': 'http://localhost:8787',
+      '/sync': 'http://localhost:8787',
       '/health': 'http://localhost:8787',
     },
   },

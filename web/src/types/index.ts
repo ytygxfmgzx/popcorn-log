@@ -102,15 +102,21 @@ export interface CloudFileMeta {
   etag?: string;
 }
 
-/** WebDAV 网盘凭据（存 settings 表 key='credentials'，仅本机；支持坚果云/Nextcloud 等标准 WebDAV） */
+/** 云同步方式：默认走自家 Worker（R2 绑定，零密钥零 CORS）；高级直连任意 S3 兼容存储 */
+export type SyncMode = 'worker' | 'direct';
+
+/**
+ * 云同步配置（存 settings 表 key='credentials'，仅本机）
+ * worker 模式：只填同步密码（两台手机同一个，Worker secret 里存同一个值）
+ * direct 模式：S3 兼容四件套（阿里 OSS / 腾讯 COS / R2 S3 API / B2…），浏览器签名直连
+ */
 export interface Credentials {
-  /** WebDAV 服务器地址，如 https://dav.jianguoyun.com/dav（末尾斜杠随意） */
-  webdavUrl?: string;
-  webdavAccount?: string;
-  webdavPassword?: string;
-  /** 旧版坚果云专属字段：读取时迁移为上面三个字段 */
-  jianguoyunAccount?: string;
-  jianguoyunAppPassword?: string;
+  mode?: SyncMode;
+  syncPassword?: string;
+  s3Endpoint?: string;
+  s3Bucket?: string;
+  s3AccessKeyId?: string;
+  s3SecretAccessKey?: string;
 }
 
 export type SettingRow =

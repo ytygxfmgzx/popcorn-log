@@ -5,7 +5,7 @@ import { showConfirmDialog, showToast } from 'vant';
 import { db } from '@/db/dexie';
 import { useLiveQuery } from '@/composables/useLiveQuery';
 import { useDuplicateGroups, useSyncStatus } from '@/composables/useSyncStatus';
-import { fetchFile } from '@/services/dav';
+import { getCloudStore } from '@/services/cloud';
 import { normalizeRemoteRecord } from '@/sync/merge';
 import {
   dismissDuplicateGroup,
@@ -48,7 +48,8 @@ watch(
       }
       void (async () => {
         try {
-          const fetched = await fetchFile(state.cloudFile as string);
+          const store = await getCloudStore();
+          const fetched = await store.fetchFile(state.cloudFile as string);
           remoteVersions[id] = fetched.text
             ? (normalizeRemoteRecord(JSON.parse(fetched.text)) ?? 'failed')
             : 'failed';

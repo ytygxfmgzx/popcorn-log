@@ -3,14 +3,14 @@ import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { showConfirmDialog, showToast } from 'vant';
 import { apiBase } from '@/services/api';
-import { verifyCredentials } from '@/services/dav';
+import { getCloudStore } from '@/services/cloud';
 import { getCredentials, saveCredentials } from '@/db/credentials';
 import { buildBackup, downloadBackup } from '@/services/backup';
 import { getAppSettings } from '@/db/settings';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { useDuplicateGroups, useSyncStatus } from '@/composables/useSyncStatus';
 import { syncNow } from '@/sync/schedule';
-import { PRESET_LOCATIONS } from '@/types';
+import { PRESET_LOCATIONS, type SyncMode } from '@/types';
 
 const router = useRouter();
 const { settings, save } = useAppSettings();
@@ -21,14 +21,27 @@ const appVersion = __APP_VERSION__;
 const workerUrlInput = ref('');
 const testing = ref(false);
 
+/* ---- 云同步（双模式：Worker+R2 默认 / S3 直连高级） ---- */
+const syncMode = ref<SyncMode>('worker');
+const syncPasswordInput = ref('');
+const s3EndpointInput = ref('');
+const s3BucketInput = ref('');
+const s3AccessKeyInput = ref('');
+const s3SecretKeyInput = ref('');
+const testingCreds = ref(false);
+const syncing = ref(false);
+
 // 直接查库初始化：settings 由 liveQuery 异步驱动，挂载瞬间尚未就绪
 onMounted(async () => {
   const appSettings = await getAppSettings();
   workerUrlInput.value = appSettings.workerUrl ?? '';
   const credentials = await getCredentials();
-  webdavUrlInput.value = credentials.webdavUrl ?? '';
-  webdavAccountInput.value = credentials.webdavAccount ?? '';
-  webdavPasswordInput.value = credentials.webdavPassword ?? '';
+  syncMode.value = credentials.mode === 'direct' ? 'direct' : 'worker';
+  syncPasswordInput.value = credentials.syncPassword ?? '';
+  s3EndpointInput.value = credentials.s3Endpoint ?? '';
+  s3BucketInput.value = credentials.s3Bucket ?? '';
+  s3AccessKeyInput.value = credentials.s3AccessKeyId ?? '';
+  s3SecretKeyInput.value = credentials.s3SecretAccessKey ?? '';
 });
 
 async function saveWorkerUrl(): Promise<void> {
@@ -52,13 +65,6 @@ async function testConnection(): Promise<void> {
     testing.value = false;
   }
 }
-
-/* ---- 云同步（WebDAV 网盘） ---- */
-const webdavUrlInput = ref('');
-const webdavAccountInput = ref('');
-const webdavPasswordInput = ref('');
-const testingCreds = ref(false);
-const syncing = ref(false);
 
 const { pendingCount, conflictCount } = useSyncStatus();
 const { groups: duplicateGroups } = useDuplicateGroups();
@@ -86,16 +92,29 @@ const lastSyncedLabel = computed(() => {
 });
 
 async function testAndSaveCredentials(): Promise<void> {
-  const url = webdavUrlInput.value.trim();
-  const account = webdavAccountInput.value.trim();
-  if (!url || !account || !webdavPasswordInput.value) {
-    showToast('请填写服务器地址、账号与密码');
-    return;
+  if (syncMode.value === 'worker') {
+    if (!syncPasswordInput.value) {
+      showToast('请填写同步密码');
+      return;
+    }
+    await saveCredentials({ mode: 'worker', syncPassword: syncPasswordInput.value });
+  } else {
+    if (!s3EndpointInput.value.trim() || !s3BucketInput.value.trim() || !s3AccessKeyInput.value.trim() || !s3SecretKeyInput.value) {
+      showToast('请填写完整的 S3 四项配置');
+      return;
+    }
+    await saveCredentials({
+      mode: 'direct',
+      s3Endpoint: s3EndpointInput.value.trim(),
+      s3Bucket: s3BucketInput.value.trim(),
+      s3AccessKeyId: s3AccessKeyInput.value.trim(),
+      s3SecretAccessKey: s3SecretKeyInput.value,
+    });
   }
-  await saveCredentials({ webdavUrl: url, webdavAccount: account, webdavPassword: webdavPasswordInput.value });
   testingCreds.value = true;
   try {
-    await verifyCredentials();
+    const store = await getCloudStore();
+    await store.verify();
     showToast('连接成功 ✅');
   } catch (error) {
     showToast(error instanceof Error ? error.message : '连接失败');
@@ -109,7 +128,7 @@ async function syncImmediately(): Promise<void> {
   try {
     const summary = await syncNow();
     if (!summary) {
-      showToast('请先填写并保存 WebDAV 配置');
+      showToast('请先填写并保存云同步配置');
       return;
     }
     if (summary.conflicts > 0) {
@@ -236,18 +255,50 @@ async function exportBackup(): Promise<void> {
       <!-- 云同步 -->
       <h2 class="group-title">云同步</h2>
       <div class="card group">
-        <van-field
-          v-model="webdavUrlInput"
-          label="服务器"
-          placeholder="如 https://yourname.infini-cloud.net/dav"
-        />
-        <van-field v-model="webdavAccountInput" label="账号" placeholder="WebDAV 账号 / 邮箱" />
-        <van-field
-          v-model="webdavPasswordInput"
-          type="password"
-          label="密码"
-          placeholder="应用密码或独立密码"
-        />
+        <div class="mode-switch">
+          <span
+            class="mode-btn"
+            :class="{ on: syncMode === 'worker' }"
+            @click="syncMode = 'worker'"
+          >默认 · Worker</span>
+          <span
+            class="mode-btn"
+            :class="{ on: syncMode === 'direct' }"
+            @click="syncMode = 'direct'"
+          >高级 · 直连 S3</span>
+        </div>
+
+        <template v-if="syncMode === 'worker'">
+          <van-field
+            v-model="syncPasswordInput"
+            type="password"
+            label="同步密码"
+            placeholder="两台手机填同一个（部署 Worker 时设置的 SYNC_PASSWORD）"
+          />
+          <p class="group-hint">
+            推荐。数据存你自己 Cloudflare 账号的 R2（免费 10GB）；密钥只在服务端，手机上仅需一个密码。两台手机填同一个即可共享全部记录与配置。
+          </p>
+        </template>
+
+        <template v-else>
+          <van-field
+            v-model="s3EndpointInput"
+            label="Endpoint"
+            placeholder="如 https://oss-cn-hangzhou.aliyuncs.com"
+          />
+          <van-field v-model="s3BucketInput" label="Bucket" placeholder="如 popcorn-log" />
+          <van-field v-model="s3AccessKeyInput" label="AccessKey" placeholder="AccessKey ID" />
+          <van-field
+            v-model="s3SecretKeyInput"
+            type="password"
+            label="SecretKey"
+            placeholder="Secret Access Key"
+          />
+          <p class="group-hint">
+            高级选项：浏览器直连任意 S3 兼容存储（阿里 OSS / 腾讯 COS / R2 / B2），需在存储控制台配置 CORS 并使用最小权限密钥。密钥只存这台手机。
+          </p>
+        </template>
+
         <button class="row-add" :loading="testingCreds" @click="testAndSaveCredentials">
           🔑 测试并保存
         </button>
@@ -260,9 +311,6 @@ async function exportBackup(): Promise<void> {
           @click="hasPendingWork && router.push('/conflicts')"
         >
           {{ statusLine }} · 最近同步：{{ lastSyncedLabel }}
-        </p>
-        <p class="group-hint">
-          推荐 infiniCLOUD（infini-cloud.net，免费 20GB，My Page → Apps Connection 获取地址与应用密码）。两台手机填同一服务同一账号即可共享全部记录与配置；账号密码只存这台手机。
         </p>
       </div>
 
@@ -406,6 +454,29 @@ async function exportBackup(): Promise<void> {
 .group-hint.status-link {
   color: var(--c-primary-active);
   cursor: pointer;
+}
+
+.mode-switch {
+  display: flex;
+  gap: 8px;
+  padding: 10px 16px 8px;
+}
+
+.mode-btn {
+  flex: 1;
+  text-align: center;
+  padding: 7px 0;
+  font-size: var(--t-13);
+  border-radius: 999px;
+  background: var(--c-bg);
+  color: var(--c-text-2);
+  cursor: pointer;
+}
+
+.mode-btn.on {
+  background: var(--c-primary-weak);
+  color: var(--c-primary-active);
+  font-weight: 600;
 }
 
 .about {

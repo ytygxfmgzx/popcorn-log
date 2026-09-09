@@ -1,69 +1,51 @@
 /**
- * popcorn-log 无状态转发层
+ * popcorn-log 服务层
  *
- * 职责：仅做"原样转交"——不存储任何数据、不写日志。
- * 目标域名白名单制（TMDB API / TMDB 图片 / WebDAV 网盘）：
- * WebDAV 目标由请求头 X-Dav-Url 提供，hostname 必须命中环境变量
- * DAV_ALLOWED_HOSTS（逗号分隔；"." 开头的条目按后缀匹配），防开放代理滥用。
+ * 职责：
+ * 1. TMDB / 海报转发（无状态，API Key 存 secret，前端不可见）
+ * 2. 云同步存储 API（/sync/*）：R2 对象存储（经内部绑定，零密钥零 CORS），
+ *    访问凭据 = 用户自设的同步密码（secret SYNC_PASSWORD），两台手机填同一个。
+ * 不存储任何数据、不写日志；换存储服务商只改部署侧，使用者无感。
  */
 
 export interface Env {
   TMDB_API_KEY: string;
-  /** 允许转发的 WebDAV 域名白名单（逗号分隔） */
-  DAV_ALLOWED_HOSTS?: string;
+  /** 同步密码（wrangler secret put SYNC_PASSWORD），手机设置页填同一个值 */
+  SYNC_PASSWORD?: string;
+  /** R2 对象存储绑定（wrangler.toml r2_buckets） */
+  BUCKET?: R2Bucket;
 }
 
 const TMDB_API_BASE = 'https://api.themoviedb.org/3/';
 const TMDB_IMAGE_BASE = 'https://image.tmdb.org/';
-/**
- * 默认放行的 WebDAV 域名（"." 开头 = 后缀匹配，infiniCLOUD 每用户一个子域）：
- * - .infini-cloud.net / .teracloud.jp：infiniCLOUD（日本，免费 20GB，海外可达，推荐）
- * - dav.jianguoyun.com：坚果云（注意：实测 Cloudflare 海外出口访问坚果云国内节点稳定 520，
- *   Worker 转发架构下坚果云不可用，保留仅供参考）
- */
-const DEFAULT_DAV_ALLOWED_HOSTS = '.infini-cloud.net,.teracloud.jp,dav.jianguoyun.com';
+
+/** 同步允许读写的对象 key（一事件一文件 + 共享配置），其余一律 403 */
+const SYNC_KEY_PATTERNS = [/^records\/[A-Za-z0-9_-]+\.json$/, /^config\.json$/];
 
 /** 转发到上游时允许透传的请求头（最小集合） */
-const FORWARD_REQUEST_HEADERS = [
-  'authorization',
-  'content-type',
-  'depth',
-  'if-match',
-  'if-none-match',
-  'overwrite',
-  'accept',
-];
+const FORWARD_REQUEST_HEADERS = ['accept'];
 
 const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, PUT, PROPFIND, MKCOL, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers':
-    'Authorization, Depth, If-Match, If-None-Match, Content-Type, Overwrite, Accept, X-Dav-Url',
-  // 同步协议依赖浏览器 JS 读取 etag / last-modified，必须显式暴露
-  'Access-Control-Expose-Headers': 'ETag, Last-Modified',
+  'Access-Control-Allow-Methods': 'GET, PUT, OPTIONS',
+  'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+  // 同步协议依赖浏览器 JS 读取 etag，必须显式暴露
+  'Access-Control-Expose-Headers': 'ETag',
   'Access-Control-Max-Age': '86400',
 };
 
-function withCors(response: Response): Response {
-  const headers = new Headers(response.headers);
-  for (const [key, value] of Object.entries(CORS_HEADERS)) {
-    headers.set(key, value);
-  }
-  // statusText 里的非 ISO-8859-1 字符会让 Response 构造器抛错（线上 530 的来源之一）
-  const statusText = response.statusText.replace(/[^\x20-\x7E]/g, '');
-  try {
-    return new Response(response.body, {
-      status: response.status,
-      statusText,
-      headers,
-    });
-  } catch {
-    return new Response(response.body, { status: response.status, headers });
-  }
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+  });
+}
+
+function errorResponse(message: string, status: number): Response {
+  return jsonResponse({ error: message }, status);
 }
 
 async function proxy(request: Request, target: URL): Promise<Response> {
-  // 继承方法与请求体，仅透传白名单请求头，Host 等由运行时自动处理
   const headers = new Headers();
   for (const name of FORWARD_REQUEST_HEADERS) {
     const value = request.headers.get(name);
@@ -71,37 +53,75 @@ async function proxy(request: Request, target: URL): Promise<Response> {
       headers.set(name, value);
     }
   }
-  const upstream = new Request(target.toString(), {
-    method: request.method,
-    headers,
-    body: request.body,
-    redirect: 'manual',
-  });
-
+  const upstream = new Request(target.toString(), { method: 'GET', headers });
   const response = await fetch(upstream);
-  return withCors(response);
+  const respHeaders = new Headers(response.headers);
+  for (const [key, value] of Object.entries(CORS_HEADERS)) {
+    respHeaders.set(key, value);
+  }
+  return new Response(response.body, { status: response.status, headers: respHeaders });
 }
 
-/** 解析 X-Dav-Url 并校验 hostname 白名单；非法返回 null（403）。条目 "." 开头 = 后缀匹配 */
-function resolveDavTarget(request: Request, env: Env): URL | null {
-  const raw = request.headers.get('x-dav-url');
-  if (!raw) return null;
-  let target: URL;
-  try {
-    target = new URL(raw);
-  } catch {
-    return null;
+/** 同步密码校验：Bearer <SYNC_PASSWORD>；未配置 secret 时明确报 503 */
+function checkSyncAuth(request: Request, env: Env): Response | null {
+  if (!env.SYNC_PASSWORD) {
+    return errorResponse('服务端未设置 SYNC_PASSWORD，请先 wrangler secret put SYNC_PASSWORD', 503);
   }
-  if (target.protocol !== 'https:' && target.protocol !== 'http:') return null;
-  const hostname = target.hostname.toLowerCase();
-  const allowed = (env.DAV_ALLOWED_HOSTS ?? DEFAULT_DAV_ALLOWED_HOSTS)
-    .split(',')
-    .map((host) => host.trim().toLowerCase())
-    .filter(Boolean);
-  const hit = allowed.some((entry) =>
-    entry.startsWith('.') ? hostname.endsWith(entry) : hostname === entry,
-  );
-  return hit ? target : null;
+  const auth = request.headers.get('Authorization') ?? '';
+  if (auth !== `Bearer ${env.SYNC_PASSWORD}`) {
+    return errorResponse('同步密码不对', 401);
+  }
+  return null;
+}
+
+function isAllowedKey(key: string): boolean {
+  return SYNC_KEY_PATTERNS.some((pattern) => pattern.test(key));
+}
+
+/** /sync/* 云同步存储 API（R2 绑定） */
+async function handleSync(request: Request, env: Env, url: URL): Promise<Response> {
+  const authError = checkSyncAuth(request, env);
+  if (authError) return authError;
+  if (!env.BUCKET) {
+    return errorResponse('服务端未绑定 R2 存储桶，请检查 wrangler.toml 并重新部署', 503);
+  }
+
+  const key = url.searchParams.get('key') ?? '';
+  const action = url.pathname;
+
+  // 清单：ListObjectsV2 语义，一页全量（家庭量级远小于 1000）
+  if (request.method === 'GET' && action === '/sync/list') {
+    const prefix = url.searchParams.get('prefix');
+    if (prefix !== 'records/' && prefix !== 'config.json') {
+      return errorResponse('不支持的 prefix', 400);
+    }
+    const listed = await env.BUCKET.list({ prefix, limit: 1000 });
+    return jsonResponse({
+      files: listed.objects.map((object) => ({ key: object.key, etag: object.etag })),
+    });
+  }
+
+  // 下载
+  if (request.method === 'GET' && action === '/sync/file') {
+    if (!isAllowedKey(key)) return errorResponse('不支持的 key', 403);
+    const object = await env.BUCKET.get(key);
+    if (!object) return errorResponse('not found', 404);
+    return jsonResponse({ etag: object.etag, content: await object.text() });
+  }
+
+  // 上传（可选乐观锁：ifMatch 与云端 etag 不符 → 412，对应前端冲突协议）
+  if (request.method === 'PUT' && action === '/sync/file') {
+    if (!isAllowedKey(key)) return errorResponse('不支持的 key', 403);
+    const body = await request.text();
+    const ifMatch = url.searchParams.get('ifMatch') ?? undefined;
+    const options: R2PutOptions = {};
+    if (ifMatch) options.onlyIf = { etagMatches: ifMatch };
+    const result = await env.BUCKET.put(key, body, options);
+    if (!result) return errorResponse('云端已被对方先修改', 412);
+    return jsonResponse({ etag: result.etag });
+  }
+
+  return errorResponse('not found', 404);
 }
 
 const handler: ExportedHandler<Env> = {
@@ -132,15 +152,11 @@ const handler: ExportedHandler<Env> = {
         return await proxy(request, target);
       }
 
-      if (url.pathname.startsWith('/dav/')) {
-        const target = resolveDavTarget(request, env);
-        if (!target) {
-          return new Response('dav host not allowed', { status: 403, headers: CORS_HEADERS });
-        }
-        return await proxy(request, target);
+      if (url.pathname.startsWith('/sync/')) {
+        return await handleSync(request, env, url);
       }
     } catch {
-      return new Response('upstream unavailable', { status: 502, headers: CORS_HEADERS });
+      return errorResponse('upstream unavailable', 502);
     }
 
     return new Response('not found', { status: 404, headers: CORS_HEADERS });

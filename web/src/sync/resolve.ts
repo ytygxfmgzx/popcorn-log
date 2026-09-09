@@ -1,7 +1,7 @@
 import { db } from '@/db/dexie';
 import { getAppSettings, saveAppSettings } from '@/db/settings';
 import { saveRecord, tombstoneRecord } from '@/db/records';
-import { fetchFile, putFileText } from '@/services/dav';
+import { getCloudStore } from '@/services/cloud';
 import { normalizeRemoteRecord, softMerge } from './merge';
 import { recordCloudFile } from '@/utils/filename';
 import type { SyncState, WatchRecord } from '@/types';
@@ -25,7 +25,8 @@ async function loadPair(recordId: string): Promise<{
 /** 编辑冲突-用云端：云端版写回本地，清 conflict 标 synced */
 export async function resolveConflictUseCloud(recordId: string): Promise<void> {
   const { state, file } = await loadPair(recordId);
-  const fetched = await fetchFile(file);
+  const store = await getCloudStore();
+  const fetched = await store.fetchFile(file);
   if (!fetched.text) throw new Error('云端文件不存在，请先同步一次');
   const remote = normalizeRemoteRecord(JSON.parse(fetched.text));
   if (!remote) throw new Error('云端数据损坏');
@@ -43,8 +44,9 @@ export async function resolveConflictUseCloud(recordId: string): Promise<void> {
 /** 编辑冲突-用本地：取云端当前 etag 强推覆盖（云端文件已消失则无锁重建） */
 export async function resolveConflictUseLocal(recordId: string): Promise<void> {
   const { record, file } = await loadPair(recordId);
-  const fetched = await fetchFile(file);
-  const result = await putFileText(file, JSON.stringify(record), fetched.etag ?? undefined);
+  const store = await getCloudStore();
+  const fetched = await store.fetchFile(file);
+  const result = await store.putFileText(file, JSON.stringify(record), fetched.etag ?? undefined);
   if (!result.ok) throw new Error('云端刚被更新，请重试');
   await db.syncStates.put({
     recordId,
@@ -57,12 +59,13 @@ export async function resolveConflictUseLocal(recordId: string): Promise<void> {
 /** 编辑冲突-软合并：拉云端 → softMerge → 写本地并推云端（两边编辑都保留） */
 export async function resolveConflictMerge(recordId: string): Promise<void> {
   const { record, file } = await loadPair(recordId);
-  const fetched = await fetchFile(file);
+  const store = await getCloudStore();
+  const fetched = await store.fetchFile(file);
   if (!fetched.text) throw new Error('云端文件不存在，请先同步一次');
   const remote = normalizeRemoteRecord(JSON.parse(fetched.text));
   if (!remote) throw new Error('云端数据损坏');
   const merged = softMerge(record, remote);
-  const result = await putFileText(file, JSON.stringify(merged), fetched.etag ?? undefined);
+  const result = await store.putFileText(file, JSON.stringify(merged), fetched.etag ?? undefined);
   if (!result.ok) throw new Error('云端刚被更新，请重试');
   await db.transaction('rw', db.records, db.syncStates, async () => {
     await db.records.put(merged);

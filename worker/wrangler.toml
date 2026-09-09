@@ -2,10 +2,15 @@ name = "popcorn-log-proxy"
 main = "src/index.ts"
 compatibility_date = "2025-01-01"
 
-# TMDB API Key 以 secret 形式配置（仓库内零密钥）：
-#   生产：pnpm deploy:worker 前执行  wrangler secret put TMDB_API_KEY
-#   本地：复制 .dev.vars.example 为 .dev.vars 并填入 Key
+# TMDB API Key 与同步密码以 secret 形式配置（仓库内零密钥）：
+#   生产：wrangler secret put TMDB_API_KEY
+#         wrangler secret put SYNC_PASSWORD   # 手机「设置→云同步」要填的同步密码
+#   本地：复制 .dev.vars.example 为 .dev.vars 并填入
 [vars]
-# WebDAV 转发域名白名单（逗号分隔，"." 开头 = 后缀匹配）。默认放行 infiniCLOUD / TeraCloud（及坚果云）；
-# 要接自建 Nextcloud 等其他 WebDAV 时，把对应域名加进来并重新部署：
-# DAV_ALLOWED_HOSTS = ".infini-cloud.net,.example.com"
+# 无明文变量
+
+# 云同步存储（Cloudflare R2，免费 10GB、零出口流量费）
+# 建桶：wrangler r2 bucket create popcorn-log
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "popcorn-log"
