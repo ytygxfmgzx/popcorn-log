@@ -4,8 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { showToast } from 'vant';
 import { db } from '@/db/dexie';
 import { saveRecord } from '@/db/records';
-import { saveAppSettings } from '@/db/settings';
-import { useAppSettings } from '@/composables/useAppSettings';
+import { getAppSettings, saveAppSettings } from '@/db/settings';
 import { fetchAndCacheMovie, getCachedMovie, type MovieBrief } from '@/services/tmdb';
 import MoviePicker from '@/components/MoviePicker.vue';
 import MemberChips from '@/components/MemberChips.vue';
@@ -38,14 +37,13 @@ const form = reactive({
   quote: '',
 });
 
-const { settings } = useAppSettings();
-
 onMounted(async () => {
   if (!editingId.value) {
-    // 新记录：默认记住上次成员组合
-    form.members = settings.value.lastMembersCombo
-      ? [...settings.value.lastMembersCombo]
-      : [];
+    // 新记录：默认记住上次成员组合（直接查库，liveQuery 挂载瞬间尚未就绪）
+    const appSettings = await getAppSettings();
+    if (appSettings.lastMembersCombo?.length) {
+      form.members = [...appSettings.lastMembersCombo];
+    }
     return;
   }
   const record = await db.records.get(editingId.value);

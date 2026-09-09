@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { onMounted, ref } from 'vue';
 import { showConfirmDialog, showToast } from 'vant';
 import { apiBase } from '@/services/api';
 import { buildBackup, downloadBackup } from '@/services/backup';
+import { getAppSettings } from '@/db/settings';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { PRESET_LOCATIONS } from '@/types';
 
@@ -14,9 +15,11 @@ const appVersion = __APP_VERSION__;
 const workerUrlInput = ref('');
 const testing = ref(false);
 
-void (async () => {
-  workerUrlInput.value = settings.value.workerUrl ?? '';
-})();
+// 直接查库初始化：settings 由 liveQuery 异步驱动，挂载瞬间尚未就绪
+onMounted(async () => {
+  const appSettings = await getAppSettings();
+  workerUrlInput.value = appSettings.workerUrl ?? '';
+});
 
 async function saveWorkerUrl(): Promise<void> {
   await save({ workerUrl: workerUrlInput.value.trim() || undefined });
