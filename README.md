@@ -143,7 +143,8 @@ git push -u origin main
 ### 第四步：首次使用配置（每台手机各自做一次）
 
 1. 手机浏览器打开 Pages 地址（形如 `https://popcorn-log.pages.dev`）。
-2. 进入 **设置 → 同步 → Worker 地址**，填入第二步得到的 Worker 地址（如 `https://popcorn-log-proxy.xxx.workers.dev`），点 **测试连接**，提示"连接成功 ✅"即可。
+2. **先做这一步再搜片**：进入 **设置 → 同步 → Worker 地址**，填入第二步得到的 Worker 地址（如 `https://popcorn.log.riddles.top`），点 **测试连接**，提示"连接成功 ✅"即可。
+   > ⚠️ 不配置 Worker 地址就搜片会报错（请求打到静态页自身，提示 JSON 解析错误或"请先填写 Worker 地址"）。每台新设备/浏览器第一次使用都要配一次（存在各自手机本地）。
 3. 在 **设置 → 家庭成员** 添加你们家的成员（默认有"爸爸、妈妈"）。
 4. 完成！点右下角 ＋ 记第一场电影。
 

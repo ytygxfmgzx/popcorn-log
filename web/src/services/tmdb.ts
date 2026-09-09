@@ -1,4 +1,4 @@
-import { apiFetch } from '@/services/api';
+import { apiFetch, parseJsonResponse } from '@/services/api';
 import { db } from '@/db/dexie';
 import { movieKey, type MediaType, type MovieMeta } from '@/types';
 
@@ -55,7 +55,7 @@ export async function searchTitles(query: string): Promise<MovieBrief[]> {
   if (!resp.ok) {
     throw new Error(`TMDB 搜索失败（${resp.status}）`);
   }
-  const data = (await resp.json()) as { results?: TmdbMultiResult[] };
+  const data = (await parseJsonResponse(resp)) as { results?: TmdbMultiResult[] };
 
   return (data.results ?? [])
     .filter((item) => {
@@ -115,7 +115,7 @@ export async function fetchAndCacheMovie(mediaType: MediaType, tmdbId: number): 
   if (!resp.ok) {
     throw new Error(`影片信息获取失败（${resp.status}）`);
   }
-  const detail = (await resp.json()) as TmdbDetail;
+  const detail = (await parseJsonResponse(resp)) as TmdbDetail;
   const meta = mapDetail(mediaType, detail);
   await db.movies.put(meta);
   return meta;
