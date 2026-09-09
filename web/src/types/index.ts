@@ -102,10 +102,15 @@ export interface CloudFileMeta {
   etag?: string;
 }
 
-/** 坚果云凭据（存 settings 表 key='credentials'，仅本机；Sync 阶段使用） */
+/** WebDAV 网盘凭据（存 settings 表 key='credentials'，仅本机；支持坚果云/Nextcloud 等标准 WebDAV） */
 export interface Credentials {
-  jianguayunAccount?: string;
-  jianguayunAppPassword?: string;
+  /** WebDAV 服务器地址，如 https://dav.jianguoyun.com/dav（末尾斜杠随意） */
+  webdavUrl?: string;
+  webdavAccount?: string;
+  webdavPassword?: string;
+  /** 旧版坚果云专属字段：读取时迁移为上面三个字段 */
+  jianguoyunAccount?: string;
+  jianguoyunAppPassword?: string;
 }
 
 export type SettingRow =

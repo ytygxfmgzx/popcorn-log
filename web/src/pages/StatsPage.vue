@@ -22,15 +22,15 @@ const today = todayStr();
 const { data: records } = useLiveQuery(() => db.records.toArray(), []);
 const { data: movies } = useLiveQuery(() => db.movies.toArray(), []);
 
-/* ---------- 筛选状态 ---------- */
+/* ---------- 筛选状态（时间窗单选 + 成员/地点/类型多选） ---------- */
 const filter = reactive<{
   range: StatsRange;
   customStart?: string;
   customEnd?: string;
   members: string[];
-  location?: string;
-  genre?: string;
-}>({ range: 'all', members: [] });
+  locations: string[];
+  genres: string[];
+}>({ range: 'all', members: [], locations: [], genres: [] });
 
 const RANGE_OPTIONS: { value: StatsRange; label: string }[] = [
   { value: 'week', label: '本周' },
@@ -38,7 +38,7 @@ const RANGE_OPTIONS: { value: StatsRange; label: string }[] = [
   { value: 'halfYear', label: '半年' },
   { value: 'year', label: '一年' },
   { value: 'all', label: '全部' },
-  { value: 'custom', label: '自定义' },
+  { value: 'custom', label: '自定义…' },
 ];
 
 const locationOptions = computed(() => [...PRESET_LOCATIONS, ...settings.value.customLocations]);
@@ -48,22 +48,46 @@ const genreOptions = computed(() => {
   return [...set].sort((a, b) => a.localeCompare(b, 'zh-CN'));
 });
 
+const timeDrop = ref();
+const filterDrop = ref();
+
 function pickRange(range: StatsRange): void {
   if (range === 'custom') {
     showCustom.value = true;
     return;
   }
   filter.range = range;
+  timeDrop.value?.toggle(false);
+}
+
+function toggleIn(list: string[], value: string): string[] {
+  return list.includes(value) ? list.filter((item) => item !== value) : [...list, value];
 }
 
 function toggleMember(member: string): void {
-  filter.members = filter.members.includes(member)
-    ? filter.members.filter((item) => item !== member)
-    : [...filter.members, member];
+  filter.members = toggleIn(filter.members, member);
 }
 
-function toggleOptional(key: 'location' | 'genre', value: string): void {
-  filter[key] = filter[key] === value ? undefined : value;
+function toggleLocation(location: string): void {
+  filter.locations = toggleIn(filter.locations, location);
+}
+
+function toggleGenre(genre: string): void {
+  filter.genres = toggleIn(filter.genres, genre);
+}
+
+const activeFilterCount = computed(
+  () => filter.members.length + filter.locations.length + filter.genres.length,
+);
+
+const filterTitle = computed(() =>
+  activeFilterCount.value ? `筛选 · ${activeFilterCount.value}` : '筛选',
+);
+
+function resetFilter(): void {
+  filter.members = [];
+  filter.locations = [];
+  filter.genres = [];
 }
 
 /* ---------- 自定义时间段 ---------- */
@@ -90,6 +114,7 @@ function applyCustom(): void {
   if (!filter.customStart || !filter.customEnd || filter.customStart > filter.customEnd) return;
   filter.range = 'custom';
   showCustom.value = false;
+  timeDrop.value?.toggle(false);
 }
 
 /* ---------- 聚合 ---------- */
@@ -101,7 +126,7 @@ const rangeLabel = computed(() => {
   if (filter.range === 'custom' && filter.customStart && filter.customEnd) {
     return `${filter.customStart} ~ ${filter.customEnd}`;
   }
-  return RANGE_OPTIONS.find((option) => option.value === filter.range)?.label ?? '';
+  return RANGE_OPTIONS.find((option) => option.value === filter.range)?.label ?? '时间';
 });
 
 const hasRecords = computed(() => records.value.some((record) => !record.deleted));
@@ -137,49 +162,69 @@ function fmtDay(date: string): string {
       <EmptyHint v-if="!hasRecords" />
 
       <template v-else>
-        <!-- 时间窗 -->
-        <div class="chip-row">
-          <span
-            v-for="option in RANGE_OPTIONS"
-            :key="option.value"
-            class="chip-btn"
-            :class="{ on: filter.range === option.value }"
-            @click="pickRange(option.value)"
-          >
-            {{ option.label }}
-          </span>
-        </div>
-
-        <!-- 筛选：成员（多选）/ 地点 / 类型（反查入口） -->
-        <div class="chip-row">
-          <span
-            v-for="member in settings.members"
-            :key="member"
-            class="chip-btn"
-            :class="{ on: filter.members.includes(member) }"
-            @click="toggleMember(member)"
-          >
-            {{ member }}
-          </span>
-          <span
-            v-for="location in locationOptions"
-            :key="location"
-            class="chip-btn"
-            :class="{ on: filter.location === location }"
-            @click="toggleOptional('location', location)"
-          >
-            {{ location }}
-          </span>
-          <span
-            v-for="genre in genreOptions"
-            :key="genre"
-            class="chip-btn"
-            :class="{ on: filter.genre === genre }"
-            @click="toggleOptional('genre', genre)"
-          >
-            {{ genre }}
-          </span>
-        </div>
+        <!-- 时间窗 + 筛选（下拉，移动端省空间） -->
+        <van-dropdown-menu class="drop-bar">
+          <van-dropdown-item ref="timeDrop" :title="`时间 · ${rangeLabel}`">
+            <div class="drop-list">
+              <span
+                v-for="option in RANGE_OPTIONS"
+                :key="option.value"
+                class="drop-row"
+                :class="{ on: filter.range === option.value }"
+                @click="pickRange(option.value)"
+              >
+                {{ option.label }}
+                <em v-if="filter.range === option.value">✓</em>
+              </span>
+            </div>
+          </van-dropdown-item>
+          <van-dropdown-item ref="filterDrop" :title="filterTitle">
+            <div class="drop-filter">
+              <p class="drop-label">一起看</p>
+              <div class="chip-row">
+                <span
+                  v-for="member in settings.members"
+                  :key="member"
+                  class="chip-btn"
+                  :class="{ on: filter.members.includes(member) }"
+                  @click="toggleMember(member)"
+                >
+                  {{ member }}
+                </span>
+              </div>
+              <p class="drop-label">在哪看</p>
+              <div class="chip-row">
+                <span
+                  v-for="location in locationOptions"
+                  :key="location"
+                  class="chip-btn"
+                  :class="{ on: filter.locations.includes(location) }"
+                  @click="toggleLocation(location)"
+                >
+                  {{ location }}
+                </span>
+              </div>
+              <p class="drop-label">类型</p>
+              <div class="chip-row">
+                <span
+                  v-for="genre in genreOptions"
+                  :key="genre"
+                  class="chip-btn"
+                  :class="{ on: filter.genres.includes(genre) }"
+                  @click="toggleGenre(genre)"
+                >
+                  {{ genre }}
+                </span>
+              </div>
+              <div class="drop-actions">
+                <van-button size="small" round @click="resetFilter">重置</van-button>
+                <van-button size="small" round type="primary" @click="filterDrop?.toggle(false)">
+                  完成
+                </van-button>
+              </div>
+            </div>
+          </van-dropdown-item>
+        </van-dropdown-menu>
 
         <!-- 总览卡 -->
         <div class="card overview">
@@ -201,7 +246,6 @@ function fmtDay(date: string): string {
               <i>全家同看</i>
             </div>
           </div>
-          <p class="ov-range">{{ rangeLabel }}</p>
         </div>
 
         <!-- 月度趋势 -->
@@ -248,7 +292,7 @@ function fmtDay(date: string): string {
             v-for="item in stats.genreDist"
             :key="item.name"
             class="hbar-row"
-            @click="toggleOptional('genre', item.name)"
+            @click="toggleGenre(item.name)"
           >
             <span class="hbar-name">{{ item.name }}</span>
             <div class="hbar-track">
@@ -268,7 +312,7 @@ function fmtDay(date: string): string {
             v-for="item in stats.locationDist"
             :key="item.name"
             class="hbar-row"
-            @click="toggleOptional('location', item.name)"
+            @click="toggleLocation(item.name)"
           >
             <span class="hbar-name">{{ item.name }}</span>
             <div class="hbar-track">
@@ -335,11 +379,60 @@ function fmtDay(date: string): string {
   font-weight: 600;
 }
 
+.drop-bar {
+  border-radius: var(--r-btn);
+  overflow: hidden;
+  margin-bottom: 12px;
+  --van-dropdown-menu-height: 40px;
+}
+
+.drop-list {
+  padding: 4px 0;
+}
+
+.drop-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 16px;
+  font-size: var(--t-15);
+  color: var(--c-text);
+}
+
+.drop-row.on {
+  color: var(--c-primary-active);
+  font-weight: 600;
+}
+
+.drop-row em {
+  font-style: normal;
+}
+
+.drop-filter {
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+}
+
+.drop-label {
+  font-size: var(--t-12);
+  color: var(--c-text-3);
+  margin: 10px 0 6px;
+}
+
+.drop-label:first-child {
+  margin-top: 0;
+}
+
 .chip-row {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
-  margin-bottom: 12px;
+}
+
+.drop-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 14px;
 }
 
 .overview {
@@ -375,13 +468,6 @@ function fmtDay(date: string): string {
 
 .ov-cell i {
   font-style: normal;
-  font-size: var(--t-12);
-  color: var(--c-text-3);
-}
-
-.ov-range {
-  margin-top: 12px;
-  text-align: center;
   font-size: var(--t-12);
   color: var(--c-text-3);
 }

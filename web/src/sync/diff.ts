@@ -33,7 +33,7 @@ export function diffRemote(remote: CloudFileMeta[], localStates: SyncState[]): R
   return { toDownload, remoteFiles };
 }
 
-/** 分批（首次全量 >50 条时 20 条/批，批间停顿，防一次打满坚果云限额） */
+/** 分批（首次全量 >50 条时 20 条/批，批间停顿，防一次打满 WebDAV 服务限额） */
 export function chunk<T>(items: T[], size: number): T[][] {
   const result: T[][] = [];
   for (let i = 0; i < items.length; i += size) {

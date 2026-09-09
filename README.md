@@ -14,7 +14,7 @@
 | 家庭成员 / 常用地点自定义 | MVP | ✅ |
 | 本地数据导出 JSON 备份 | MVP | ✅ |
 | PWA 离线 + 新版本提示 | MVP | ✅ |
-| 坚果云双人协同同步（多端一致、冲突处理、疑似重复软合并） | Sync | ✅ |
+| WebDAV 网盘双人协同同步（坚果云/Nextcloud 等，多端一致、冲突处理、疑似重复软合并） | Sync | ✅ |
 | 统计（时间窗/成员/地点/类型筛选、月度趋势、榜单反查） | Sync | ✅ |
 | 同片观看次数（首页「第 N 次」徽章 + 详情页观看轨迹） | Sync | ✅ |
 | 想看清单、演员/导演榜单、年度总结 | Enhance | 📋 规划中 |
@@ -31,10 +31,10 @@ Cloudflare Pages（静态托管前端，免费不限量）
 Cloudflare Worker（无状态转发，免费 10 万次请求/天，不存任何数据）
    ├─ /tmdb/*  → api.themoviedb.org（搜片与影片信息，API Key 存 Worker，前端不可见）
    ├─ /image/* → image.tmdb.org（海报图片）
-   └─ /dav/*   → dav.jianguayun.com（坚果云 WebDAV，双人同步）
+   └─ /dav/*   → WebDAV 网盘（按 DAV_ALLOWED_HOSTS 白名单转发，默认坚果云）
 ```
 
-为什么需要 Worker：① 坚果云 WebDAV 不返回 CORS 头，浏览器直连必被拦；② TMDB 在大陆无法直连，Worker 海外出口不受限。
+为什么需要 Worker：① WebDAV 网盘普遍不返回 CORS 头，浏览器直连必被拦；② TMDB 在大陆无法直连，Worker 海外出口不受限。
 
 ## 准备工作（一次性）
 
@@ -45,7 +45,7 @@ Cloudflare Worker（无状态转发，免费 10 万次请求/天，不存任何�
 | GitHub 账号 | 托管本仓库、自动构建 | [github.com](https://github.com) 注册 |
 | Cloudflare 账号 | 部署 Pages + Worker | [dash.cloudflare.com](https://dash.cloudflare.com) 注册（无需绑卡） |
 | TMDB API Key | 影片搜索/信息/海报 | 见下方「申请 TMDB Key」 |
-| 坚果云账号 | 观影数据云端同步（双人协同） | [jianguayun.com](https://www.jianguayun.com) 注册（免费档够用），并按下方「申请坚果云应用密码」获取应用密码 |
+| WebDAV 网盘账号 | 观影数据云端同步（双人协同）；推荐 infiniCLOUD（坚果云经 Worker 不可达，见下文） | [infini-cloud.net](https://infini-cloud.net/) 注册（免费 20GB），按下方「准备 WebDAV 网盘」开启 Apps Connection |
 
 ### 申请 TMDB API Key（免费）
 
@@ -54,14 +54,23 @@ Cloudflare Worker（无状态转发，免费 10 万次请求/天，不存任何�
 3. 点击 **Request an API Key**，选择 **Developer** 类型，用途随便填家庭自用工具即可。
 4. 记下 **API Key (v3 auth)**——一串 32 位字符，这就是后面要配置到 Worker 的 `TMDB_API_KEY`。
 
-### 申请坚果云应用密码（免费，用于数据同步）
+### 准备 WebDAV 网盘（推荐 infiniCLOUD）
 
-> 同步用的不是坚果云登录密码，而是单独生成的「应用密码」（WebDAV 协议要求，也更安全）。
+> 同步支持任何标准 WebDAV 网盘，前提是**你的 Cloudflare Worker 所在网络能访问它**。
+> 实测结论：infiniCLOUD（日本）通畅；坚果云（国内节点）会拦截 Cloudflare 海外出口（稳定 520），**经 Worker 转发的架构下坚果云不可用**。
 
-1. 打开 [jianguayun.com](https://www.jianguayun.com) 注册并登录（网页版）。
-2. 右上角头像 → **账户信息** → **安全选项**。
-3. 找到「第三方应用管理」→ **添加应用密码**，名称随意（如 `popcorn-log`），生成后**立即复制保存**（只显示一次）。
-4. 这串密码就是设置页「云同步 → 应用密码」要填的内容；账号填你的坚果云登录邮箱/手机号。
+**infiniCLOUD（推荐，免费 20GB）**：
+
+1. 打开 [infini-cloud.net](https://infini-cloud.net/) 注册（支持邮箱注册，界面有英文）。
+2. 登录后进入 **My Page** → **Apps Connection** → 打开应用连接，会生成：
+   - **WebDAV Connection URL**：形如 `https://你的用户名.infini-cloud.net/dav/`
+   - **App Password**：应用专用密码（不是登录密码）
+3. 设置页「云同步」这样填：服务器 = 你的 Connection URL（如 `https://yourname.infini-cloud.net/dav`），账号 = infiniCLOUD 用户 ID，密码 = App Password。
+
+**其他 WebDAV 服务**（Nextcloud 自建、旧版 TeraCloud 等）：
+
+1. 先确认 Worker 能访问该服务域名（最简单：配好后到设置页「测试并保存」直接验证）。
+2. 若域名不在默认白名单（infini-cloud.net / teracloud.jp），在 `worker/wrangler.toml` 的 `DAV_ALLOWED_HOSTS` 追加（"." 开头表示后缀匹配，如 `.example.com`），或到 Cloudflare 控制台 Workers → Settings → Variables 添加同名变量，然后重新部署 Worker。
 
 ## 本地开发
 
@@ -155,17 +164,17 @@ git push -u origin main
 1. 手机浏览器打开 Pages 地址（形如 `https://popcorn-log.pages.dev`）。
 2. **先做这一步再搜片**：进入 **设置 → 这里管影片资源 → Worker 地址**，填入第二步得到的 Worker 地址（如 `https://popcorn.log.riddles.top`），点 **测试连接**，提示"连接成功 ✅"即可。
    > ⚠️ 不配置 Worker 地址就搜片会报错（请求打到静态页自身，提示 JSON 解析错误或"请先填写 Worker 地址"）。每台新设备/浏览器第一次使用都要配一次（存在各自手机本地）。
-3. **配置云同步**（两台手机填同一坚果云账号）：进入 **设置 → 云同步**，填入坚果云账号与应用密码，点 **测试并保存**，提示"连接成功 ✅"后点 **立即同步**。
-   - 新手机/清空数据后：自动从坚果云全量拉回全部记录与配置。
-   - 配置前本地已有的记录：自动全部推送到坚果云，无需任何手动迁移。
+3. **配置云同步**（两台手机填同一 WebDAV 服务与账号）：进入 **设置 → 云同步**，填 WebDAV 服务器地址（infiniCLOUD 为 `https://你的用户名.infini-cloud.net/dav`）、账号与应用密码，点 **测试并保存**，提示"连接成功 ✅"后点 **立即同步**。
+   - 新手机/清空数据后：自动从网盘全量拉回全部记录与配置。
+   - 配置前本地已有的记录：自动全部推送到网盘，无需任何手动迁移。
    - 若两边各自记了同一场（同一天同一部片），首页会出现提示，可一键软合并或选择"是两场都保留"。
 4. 在 **设置 → 一起看** 添加你们家的成员（默认有"爸爸、妈妈"；配置云同步后两台手机自动共享成员与「在哪看」列表）。
 5. 完成！点右下角 ＋ 记第一场电影。
 
 ### 同步是怎么工作的（了解即可，全自动）
 
-- **本地优先**：记录永远先写手机本地（离线可用、零延迟），后台自动与坚果云对账；指示器显示 ✓ 已同步 / ⏳ 待同步 / ⚠️ 有冲突。
-- **一事件一文件**：每场电影是坚果云 `popcorn-log/records/` 下一个独立 JSON 文件，两台手机并发记录互不覆盖，永不丢数据。
+- **本地优先**：记录永远先写手机本地（离线可用、零延迟），后台自动与网盘对账；指示器显示 ✓ 已同步 / ⏳ 待同步 / ⚠️ 有冲突。
+- **一事件一文件**：每场电影是网盘 `popcorn-log/records/` 下一个独立 JSON 文件，两台手机并发记录互不覆盖，永不丢数据。
 - **自动触发**：打开应用/切回前台、保存记录后、网络恢复时自动同步；也可随时手动点「立即同步」。
 - **冲突不静默**：同一条记录两边同时编辑时，云端停在先保存的版本等人工裁决（用云端/用本机/软合并），任何一边的修改都不会悄悄丢掉。
 
@@ -182,7 +191,7 @@ git push -u origin main
 不会。Pages 静态托管免费不限量；Worker 免费额度 10 万请求/天（家庭实际用量约 100~200 次/天，余量约 500 倍）；即使超额也只是当日停用、次日恢复，不产生费用。
 
 **Q：我的数据存在哪？安全吗？**
-观影记录存在你手机本地 IndexedDB，并自动同步到你自己的坚果云（`popcorn-log/` 目录下每场电影一个 JSON 文件，随时可在坚果云网页版查看或下载，不依赖本应用也能拿走全部数据）。TMDB Key 存在 Cloudflare 环境变量，不进前端代码；坚果云账号与应用密码只存各自手机本地，绝不上传；Worker 不存储、不写日志。仍建议每月导出一次 JSON 备份（设置 → 数据）作为兜底。
+观影记录存在你手机本地 IndexedDB，并自动同步到你自己的 WebDAV 网盘（`popcorn-log/` 目录下每场电影一个 JSON 文件，随时可在网盘网页版查看或下载，不依赖本应用也能拿走全部数据）。TMDB Key 存在 Cloudflare 环境变量，不进前端代码；WebDAV 账号与密码只存各自手机本地，绝不上传；Worker 不存储、不写日志。仍建议每月导出一次 JSON 备份（设置 → 本地备份）作为兜底。
 
 **Q：TMDB 是什么？为什么搜片要注册它？**
 The Movie Database，免费开放的影视数据库（类似豆瓣的公开版），提供中文片名、海报、导演、类型、简介。搜片与海报都从它获取，经你自己的 Worker 转发。
@@ -194,10 +203,10 @@ The Movie Database，免费开放的影视数据库（类似豆瓣的公开版�
 可以。搜索同时支持电影和剧集（结果中标注「剧 / 电影」）。
 
 **Q：换了手机 / 清了浏览器数据怎么办？**
-在新手机上打开应用 → 配好 Worker 地址与坚果云账号 → 点「立即同步」，全部记录与配置自动从坚果云拉回（数量多时自动分批，约几十秒）。
+在新手机上打开应用 → 配好 Worker 地址与 WebDAV 网盘账号 → 点「立即同步」，全部记录与配置自动从网盘拉回（数量多时自动分批，约几十秒）。
 
 **Q：两台手机怎么保持数据一致？**
-双方在设置页「云同步」填**同一个**坚果云账号与各自的应用密码即可。数据以"一事件一文件"形式同步到同一个坚果云目录，打开应用/保存记录/网络恢复时自动对账；同一条记录两边同时编辑会有冲突提示（用云端/用本机/软合并），两边同时记了同一场会有"疑似重复"提示，绝不静默丢数据。
+双方在设置页「云同步」填**同一个** WebDAV 服务与账号即可。数据以"一事件一文件"形式同步到同一个网盘目录，打开应用/保存记录/网络恢复时自动对账；同一条记录两边同时编辑会有冲突提示（用云端/用本机/软合并），两边同时记了同一场会有"疑似重复"提示，绝不静默丢数据。
 
 ## 目录结构
 
@@ -214,7 +223,7 @@ popcorn-log/
 │     ├─ components/       # 规范组件（RecordCard/MoviePicker/...）
 │     ├─ services/         # TMDB / 海报缓存 / WebDAV 同步访问 / Worker 基址 / 备份
 │     ├─ sync/             # 同步引擎（对账/推送/冲突/软合并纯函数 + 触发调度）
-│     ├─ db/               # Dexie（IndexedDB）schema 与读写（含坚果云凭据）
+│     ├─ db/               # Dexie（IndexedDB）schema 与读写（含 WebDAV 凭据）
 │     ├─ composables/      # liveQuery 响应式封装
 │     ├─ utils/            # 纯函数（日期/uuid/文件名/重复判定）+ 单测
 │     ├─ types/            # 领域类型
@@ -230,8 +239,8 @@ popcorn-log/
 
 ## 数据安全设计要点
 
-- 坚果云凭据只存各自手机本地，绝不上传、不进代码、不进备份导出
+- WebDAV 凭据只存各自手机本地，绝不上传、不进代码、不进备份导出
 - TMDB Key 存 Cloudflare Worker 环境变量（secret），前端与仓库内零密钥
-- Worker 白名单仅 3 个目标域名（TMDB API/图片、坚果云），不做开放代理
+- Worker 仅向白名单域名转发（TMDB API/图片 + DAV_ALLOWED_HOSTS 内的 WebDAV 域名），不做开放代理
 - 删除采用墓碑机制（软删除），可恢复
 - 全链路 HTTPS

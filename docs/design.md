@@ -27,7 +27,7 @@ Cloudflare Pages（静态托管 web/ 构建产物，免费不限量）
 Cloudflare Worker（无状态转发，免费 10 万次/天）
    ├─ /tmdb/*  → api.themoviedb.org（API Key 存 Worker secret，前端不可见）
    ├─ /image/* → image.tmdb.org（海报图片）
-   └─ /dav/*   → dav.jianguayun.com（坚果云 WebDAV，Sync 阶段启用）
+   └─ /dav/*   → dav.jianguoyun.com（坚果云 WebDAV，Sync 阶段启用）
 ```
 
 转发层解决两个硬伤：坚果云 WebDAV 无 CORS 头（浏览器直连必被拦）；TMDB 大陆被封锁（Worker 海外出口不受限）。Worker 不存储任何数据、不写日志，数据私有性不变。
@@ -63,7 +63,7 @@ popcorn-log/
 | `GET /health` | — | 200 纯文本，部署自检 |
 | `/tmdb/<path>?<query>` | `https://api.themoviedb.org/3/<path>` | 透传 query；**强制覆盖 `api_key` = 环境变量 `TMDB_API_KEY`**，忽略前端传入 |
 | `/image/<path>` | `https://image.tmdb.org/<path>` | 原样转发字节流 |
-| `/dav/<path>` | `https://dav.jianguayun.com/dav/<path>` | 全方法透传（PROPFIND/GET/PUT/MKCOL/DELETE/OPTIONS…）；透传请求头 `Authorization / Depth / If-Match / Content-Type / Overwrite`；透传状态码（含 412 冲突）与响应头 `ETag / Last-Modified` |
+| `/dav/<path>` | `https://dav.jianguoyun.com/dav/<path>` | 全方法透传（PROPFIND/GET/PUT/MKCOL/DELETE/OPTIONS…）；透传请求头 `Authorization / Depth / If-Match / Content-Type / Overwrite`；透传状态码（含 412 冲突）与响应头 `ETag / Last-Modified` |
 | 其他 | — | 404 |
 
 **CORS**：OPTIONS 预检放行；所有响应附加 `Access-Control-Allow-Origin: *` 与 **`Access-Control-Expose-Headers: ETag, Last-Modified`**（同步协议依赖 JS 读取 etag）。

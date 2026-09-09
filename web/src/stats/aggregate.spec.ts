@@ -34,7 +34,7 @@ function meta(key: string, overrides: Partial<MovieMeta> = {}): MovieMeta {
   };
 }
 
-const noFilter = { range: 'all' as const, members: [] };
+const noFilter = { range: 'all' as const, members: [], locations: [], genres: [] };
 
 describe('rangeStartDate', () => {
   it('本周 = 周一（2026-09-09 周三 → 09-07）', () => {
@@ -78,18 +78,40 @@ describe('computeStats', () => {
     expect(stats.viewings).toBe(2); // a、b
   });
 
-  it('类型筛选：join movies.genres', () => {
-    const stats = computeStats(records, movies, { ...noFilter, genre: '奇幻' }, [], TODAY);
-    expect(stats.viewings).toBe(2); // a、b（movie:1 有奇幻）
+  it('类型筛选（多选 OR）：动画+纪录片', () => {
+    const stats = computeStats(
+      records,
+      movies,
+      { ...noFilter, genres: ['动画', '纪录片'] },
+      [],
+      TODAY,
+    );
+    expect(stats.viewings).toBe(3);
+  });
+
+  it('类型筛选：奇幻只命中 movie:1 的两场', () => {
+    const stats = computeStats(records, movies, { ...noFilter, genres: ['奇幻'] }, [], TODAY);
+    expect(stats.viewings).toBe(2);
+  });
+
+  it('地点多选 OR', () => {
+    const stats = computeStats(
+      records,
+      movies,
+      { ...noFilter, locations: ['影院'] },
+      [],
+      TODAY,
+    );
+    expect(stats.viewings).toBe(1);
   });
 
   it('时间窗：本月只剩 9 月的两场（8 月与更早被窗口排除）', () => {
-    const stats = computeStats(records, movies, { range: 'month', members: [] }, [], TODAY);
+    const stats = computeStats(records, movies, { range: 'month', members: [], locations: [], genres: [] }, [], TODAY);
     expect(stats.viewings).toBe(2);
   });
 
   it('时间窗：本周（09-07 起）9 月初的记录被排除', () => {
-    const stats = computeStats(records, movies, { range: 'week', members: [] }, [], TODAY);
+    const stats = computeStats(records, movies, { range: 'week', members: [], locations: [], genres: [] }, [], TODAY);
     expect(stats.viewings).toBe(0);
   });
 
@@ -97,7 +119,7 @@ describe('computeStats', () => {
     const stats = computeStats(
       records,
       movies,
-      { range: 'custom', members: [], customStart: '2026-08-15', customEnd: '2026-09-01' },
+      { range: 'custom', members: [], locations: [], genres: [], customStart: '2026-08-15', customEnd: '2026-09-01' },
       [],
       TODAY,
     );

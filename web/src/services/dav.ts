@@ -1,14 +1,17 @@
 import { requireApiBase } from '@/services/api';
-import { getCredentials } from '@/db/credentials';
+import { getCredentials, isCredentialsComplete, normalizeWebdavUrl } from '@/db/credentials';
 import { parsePropfind } from '@/sync/propfind';
 import type { CloudFileMeta } from '@/types';
 
 /**
- * 坚果云 WebDAV 访问层（经 Worker /dav/* 无状态转发，解决坚果云无 CORS 的硬伤）
- * 协议约定：一事件一文件；etag 由坚果云维护，客户端只"抄下指纹、下次对比"。
+ * WebDAV 访问层（经 Worker /dav/* 无状态转发，解决 WebDAV 服务普遍无 CORS 头的问题）
+ * 目标 = 用户配置的 WebDAV 服务器 + /popcorn-log；经 X-Dav-Url 头告知 Worker 转发目标
+ * （Worker 侧按 DAV_ALLOWED_HOSTS 白名单校验，防开放代理）。
+ * 协议约定：一事件一文件；etag 由服务器维护，客户端只"抄下指纹、下次对比"。
  */
 
-const CLOUD_ROOT = '/dav/popcorn-log';
+/** 应用数据在网盘里的根目录（相对 WebDAV 服务器地址） */
+const CLOUD_ROOT_PATH = '/popcorn-log';
 
 export class DavError extends Error {
   constructor(
@@ -19,32 +22,36 @@ export class DavError extends Error {
   }
 }
 
-/** Basic Auth 头；凭据不完整时抛错（引擎入口已确保不会走到） */
-async function authHeader(): Promise<string> {
-  const { jianguayunAccount, jianguayunAppPassword } = await getCredentials();
-  if (!jianguayunAccount || !jianguayunAppPassword) {
-    throw new Error('未配置坚果云账号');
-  }
-  return `Basic ${btoa(`${jianguayunAccount}:${jianguayunAppPassword}`)}`;
-}
-
 async function davFetch(path: string, init: RequestInit & { method: string }): Promise<Response> {
   const base = await requireApiBase();
-  const resp = await fetch(`${base}${CLOUD_ROOT}${path}`, {
+  const credentials = await getCredentials();
+  if (!isCredentialsComplete(credentials)) {
+    throw new Error('未配置 WebDAV 同步');
+  }
+  const target = `${normalizeWebdavUrl(credentials.webdavUrl as string)}${CLOUD_ROOT_PATH}${path}`;
+  const resp = await fetch(`${base}/dav${path}`, {
     ...init,
-    headers: { Authorization: await authHeader(), ...init.headers },
+    headers: {
+      Authorization: `Basic ${btoa(`${credentials.webdavAccount}:${credentials.webdavPassword}`)}`,
+      'X-Dav-Url': target,
+      ...init.headers,
+    },
   });
   if (resp.status === 401) {
-    throw new DavError('坚果云账号或应用密码不对', 401);
+    throw new DavError('WebDAV 账号或密码不对', 401);
   }
   return resp;
 }
 
-/** 凭据连通性校验（设置页「测试连接」用） */
+/** 凭据与地址连通性校验（设置页「测试并保存」用） */
 export async function verifyCredentials(): Promise<void> {
   const resp = await davFetch('/', { method: 'PROPFIND', headers: { Depth: '0' } });
+  if (resp.status === 403) {
+    throw new DavError('该账号没有此目录的访问权限', 403);
+  }
+  // 404 = 凭据有效、目录未建（首次使用，同步时会自动创建）
   if (!resp.ok && resp.status !== 404) {
-    throw new DavError(`坚果云连接失败（${resp.status}）`, resp.status);
+    throw new DavError(`WebDAV 连接失败（${resp.status}）`, resp.status);
   }
 }
 
@@ -62,7 +69,7 @@ export async function propfindRecords(): Promise<CloudFileMeta[]> {
 export interface FetchedFile {
   /** 404 时为 null（文件不存在，由调用方决定策略） */
   text: string | null;
-  /** 响应 ETag（底账更新用；坚果云 GET 响应带） */
+  /** 响应 ETag（底账更新用） */
   etag?: string;
 }
 

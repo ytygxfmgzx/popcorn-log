@@ -4,8 +4,8 @@ import { toDateStr } from '@/utils/date';
 import type { MovieMeta, WatchRecord } from '@/types';
 
 /**
- * 本地数据导出 JSON 备份（MVP 阶段 IndexedDB 有被系统清除风险，云同步上线前的兜底）
- * 不含：坚果云凭据（绝不导出）、海报 blob（体积大，可从 TMDB 重新拉取）
+ * 本地数据导出 JSON 备份（IndexedDB 有被系统清除风险，云同步之外的兜底）
+ * 不含：WebDAV 凭据（绝不导出）、海报 blob（体积大，可从 TMDB 重新拉取）
  */
 export interface BackupFile {
   app: 'popcorn-log';

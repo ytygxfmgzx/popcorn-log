@@ -6,4 +6,6 @@ compatibility_date = "2025-01-01"
 #   生产：pnpm deploy:worker 前执行  wrangler secret put TMDB_API_KEY
 #   本地：复制 .dev.vars.example 为 .dev.vars 并填入 Key
 [vars]
-# 无明文变量；TMDB_API_KEY 走 secret / .dev.vars
+# WebDAV 转发域名白名单（逗号分隔，"." 开头 = 后缀匹配）。默认放行 infiniCLOUD / TeraCloud（及坚果云）；
+# 要接自建 Nextcloud 等其他 WebDAV 时，把对应域名加进来并重新部署：
+# DAV_ALLOWED_HOSTS = ".infini-cloud.net,.example.com"

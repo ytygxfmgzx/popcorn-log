@@ -16,7 +16,7 @@ export function useSyncStatus() {
   const conflictCount = computed(
     () => syncStates.value.filter((state) => state.status === 'conflict').length,
   );
-  /** 坚果云账号+应用密码都已填写（未配置时同步静默跳过，指示器显示"未开启"） */
+  /** WebDAV 服务器/账号/密码都已填写（未配置时同步静默跳过，指示器显示"未开启"） */
   const hasCredentials = computed(() => {
     const row = credRow.value;
     return row?.key === 'credentials' ? isCredentialsComplete(row.value) : false;

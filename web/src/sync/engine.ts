@@ -81,7 +81,7 @@ async function pullPhase(summary: SyncSummary): Promise<void> {
 
   const batches = chunk(toDownload, 20);
   for (const [index, batch] of batches.entries()) {
-    if (index > 0) await sleep(300); // 首次全量批间停顿，防打满坚果云限额
+    if (index > 0) await sleep(300); // 首次全量批间停顿，防打满 WebDAV 服务限额
     for (const meta of batch) {
       await withBackoff(async () => {
         const fetched = await fetchFile(meta.file);

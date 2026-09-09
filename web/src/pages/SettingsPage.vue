@@ -26,8 +26,9 @@ onMounted(async () => {
   const appSettings = await getAppSettings();
   workerUrlInput.value = appSettings.workerUrl ?? '';
   const credentials = await getCredentials();
-  jgyAccount.value = credentials.jianguayunAccount ?? '';
-  jgyPassword.value = credentials.jianguayunAppPassword ?? '';
+  webdavUrlInput.value = credentials.webdavUrl ?? '';
+  webdavAccountInput.value = credentials.webdavAccount ?? '';
+  webdavPasswordInput.value = credentials.webdavPassword ?? '';
 });
 
 async function saveWorkerUrl(): Promise<void> {
@@ -52,9 +53,10 @@ async function testConnection(): Promise<void> {
   }
 }
 
-/* ---- 云同步（坚果云） ---- */
-const jgyAccount = ref('');
-const jgyPassword = ref('');
+/* ---- 云同步（WebDAV 网盘） ---- */
+const webdavUrlInput = ref('');
+const webdavAccountInput = ref('');
+const webdavPasswordInput = ref('');
 const testingCreds = ref(false);
 const syncing = ref(false);
 
@@ -84,12 +86,13 @@ const lastSyncedLabel = computed(() => {
 });
 
 async function testAndSaveCredentials(): Promise<void> {
-  const account = jgyAccount.value.trim();
-  if (!account || !jgyPassword.value) {
-    showToast('请填写坚果云账号与应用密码');
+  const url = webdavUrlInput.value.trim();
+  const account = webdavAccountInput.value.trim();
+  if (!url || !account || !webdavPasswordInput.value) {
+    showToast('请填写服务器地址、账号与密码');
     return;
   }
-  await saveCredentials({ jianguayunAccount: account, jianguayunAppPassword: jgyPassword.value });
+  await saveCredentials({ webdavUrl: url, webdavAccount: account, webdavPassword: webdavPasswordInput.value });
   testingCreds.value = true;
   try {
     await verifyCredentials();
@@ -106,7 +109,7 @@ async function syncImmediately(): Promise<void> {
   try {
     const summary = await syncNow();
     if (!summary) {
-      showToast('请先填写并保存坚果云账号');
+      showToast('请先填写并保存 WebDAV 配置');
       return;
     }
     if (summary.conflicts > 0) {
@@ -233,12 +236,17 @@ async function exportBackup(): Promise<void> {
       <!-- 云同步 -->
       <h2 class="group-title">云同步</h2>
       <div class="card group">
-        <van-field v-model="jgyAccount" label="坚果云账号" placeholder="you@example.com" />
         <van-field
-          v-model="jgyPassword"
+          v-model="webdavUrlInput"
+          label="服务器"
+          placeholder="如 https://yourname.infini-cloud.net/dav"
+        />
+        <van-field v-model="webdavAccountInput" label="账号" placeholder="WebDAV 账号 / 邮箱" />
+        <van-field
+          v-model="webdavPasswordInput"
           type="password"
-          label="应用密码"
-          placeholder="坚果云网页版 → 账户信息 → 安全选项 → 添加应用密码"
+          label="密码"
+          placeholder="应用密码或独立密码"
         />
         <button class="row-add" :loading="testingCreds" @click="testAndSaveCredentials">
           🔑 测试并保存
@@ -254,12 +262,12 @@ async function exportBackup(): Promise<void> {
           {{ statusLine }} · 最近同步：{{ lastSyncedLabel }}
         </p>
         <p class="group-hint">
-          账号与应用密码只存这台手机；两台手机登录同一坚果云账号即可共享全部记录与配置。
+          推荐 infiniCLOUD（infini-cloud.net，免费 20GB，My Page → Apps Connection 获取地址与应用密码）。两台手机填同一服务同一账号即可共享全部记录与配置；账号密码只存这台手机。
         </p>
       </div>
 
-      <!-- 数据 -->
-      <h2 class="group-title">数据</h2>
+      <!-- 本地备份 -->
+      <h2 class="group-title">本地备份</h2>
       <div class="card group">
         <button class="row-add" :loading="exporting" @click="exportBackup">
           📦 导出 JSON 备份

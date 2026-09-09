@@ -14,8 +14,10 @@ export interface StatsFilter {
   customEnd?: string;
   /** 成员多选，任一命中保留（空 = 不筛） */
   members: string[];
-  location?: string;
-  genre?: string;
+  /** 地点多选，任一命中保留（空 = 不筛） */
+  locations: string[];
+  /** 类型多选，任一命中保留（空 = 不筛） */
+  genres: string[];
 }
 
 export interface NamedCount {
@@ -91,9 +93,10 @@ export function computeStats(
     if (record.deleted) return false;
     if (!inTimeWindow(record, filter, today)) return false;
     if (filter.members.length && !record.members.some((m) => filter.members.includes(m))) return false;
-    if (filter.location && record.location !== filter.location) return false;
-    if (filter.genre && !(genresByKey.get(`${record.mediaType}:${record.tmdbId}`) ?? []).includes(filter.genre)) {
-      return false;
+    if (filter.locations.length && !filter.locations.includes(record.location)) return false;
+    if (filter.genres.length) {
+      const genres = genresByKey.get(`${record.mediaType}:${record.tmdbId}`) ?? [];
+      if (!filter.genres.some((genre) => genres.includes(genre))) return false;
     }
     return true;
   });

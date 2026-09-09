@@ -6,7 +6,7 @@
 defineProps<{
   pendingCount?: number;
   hasConflict?: boolean;
-  /** 坚果云凭据未配置：显示中性"未开启"，不误导为已同步 */
+  /** WebDAV 凭据未配置：显示中性"未开启"，不误导为已同步 */
   disabled?: boolean;
 }>();
 </script>
