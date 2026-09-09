@@ -11,8 +11,8 @@ export default defineConfig({
       registerType: 'prompt',
       includeAssets: ['icons/apple-touch-icon.png'],
       manifest: {
-        name: '观影手账',
-        short_name: '观影手账',
+        name: 'Popcorn Log',
+        short_name: 'Popcorn Log',
         description: '家庭观影记忆手账',
         theme_color: '#F97316',
         background_color: '#FFF9F2',

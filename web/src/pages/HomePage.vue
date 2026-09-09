@@ -21,7 +21,7 @@ const visible = computed(() => records.value);
 <template>
   <div>
     <header class="navbar">
-      <h1>观影手账</h1>
+      <h1>Popcorn Log</h1>
       <SyncIndicator />
     </header>
 

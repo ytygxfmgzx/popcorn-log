@@ -103,8 +103,32 @@ async function exportBackup(): Promise<void> {
     </header>
 
     <main class="page">
-      <!-- 同步 -->
-      <h2 class="group-title">同步</h2>
+      <!-- 一起看（成员） -->
+      <h2 class="group-title">一起看</h2>
+      <div class="card group">
+        <div v-for="member in settings.members" :key="member" class="line-row">
+          <span>👨‍👩‍👧 {{ member }}</span>
+          <button class="row-remove" @click="removeMember(member)">移除</button>
+        </div>
+        <button class="row-add" @click="showAddMember = true">＋ 添加成员</button>
+      </div>
+
+      <!-- 在哪看（地点） -->
+      <h2 class="group-title">在哪看</h2>
+      <div class="card group">
+        <div v-for="location in PRESET_LOCATIONS" :key="location" class="line-row">
+          <span>{{ location }}</span>
+          <span class="preset-tag">预设</span>
+        </div>
+        <div v-for="location in settings.customLocations" :key="location" class="line-row">
+          <span>{{ location }}</span>
+          <button class="row-remove" @click="removeLocation(location)">删除</button>
+        </div>
+        <p class="group-hint">新地点可在录入页随手添加，会自动出现在这里。</p>
+      </div>
+
+      <!-- 这里管影片资源（TMDB 代理 Worker） -->
+      <h2 class="group-title">这里管影片资源</h2>
       <div class="card group">
         <div class="worker-row">
           <van-field
@@ -128,30 +152,6 @@ async function exportBackup(): Promise<void> {
         </p>
       </div>
 
-      <!-- 家庭成员 -->
-      <h2 class="group-title">家庭成员</h2>
-      <div class="card group">
-        <div v-for="member in settings.members" :key="member" class="line-row">
-          <span>👨‍👩‍👧 {{ member }}</span>
-          <button class="row-remove" @click="removeMember(member)">移除</button>
-        </div>
-        <button class="row-add" @click="showAddMember = true">＋ 添加成员</button>
-      </div>
-
-      <!-- 地点 -->
-      <h2 class="group-title">常用地点</h2>
-      <div class="card group">
-        <div v-for="location in PRESET_LOCATIONS" :key="location" class="line-row">
-          <span>{{ location }}</span>
-          <span class="preset-tag">预设</span>
-        </div>
-        <div v-for="location in settings.customLocations" :key="location" class="line-row">
-          <span>{{ location }}</span>
-          <button class="row-remove" @click="removeLocation(location)">删除</button>
-        </div>
-        <p class="group-hint">新地点可在录入页随手添加，会自动出现在这里。</p>
-      </div>
-
       <!-- 数据 -->
       <h2 class="group-title">数据</h2>
       <div class="card group">
@@ -166,7 +166,7 @@ async function exportBackup(): Promise<void> {
       <!-- 关于 -->
       <h2 class="group-title">关于</h2>
       <div class="card group about">
-        <p>观影手账（popcorn-log）</p>
+        <p>Popcorn Log</p>
         <p>v{{ appVersion }} · 云同步与统计开发中</p>
       </div>
     </main>
@@ -179,7 +179,7 @@ async function exportBackup(): Promise<void> {
       :style="{ maxWidth: '480px', left: '50%', transform: 'translateX(-50%)' }"
     >
       <div class="sheet">
-        <h3>添加家庭成员</h3>
+        <h3>添加成员</h3>
         <van-field
           v-model="newMember"
           placeholder="如：妹妹、外婆"

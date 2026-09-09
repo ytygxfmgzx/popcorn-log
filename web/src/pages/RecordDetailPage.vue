@@ -79,7 +79,6 @@ async function remove(): Promise<void> {
           <h2>{{ record.titleSnapshot }}</h2>
           <p v-if="metaLine" class="sub">{{ metaLine }}</p>
           <p v-if="meta?.director" class="sub">导演：{{ meta.director }}</p>
-          <span class="auto-badge">✨ 影片信息自动填充</span>
         </div>
       </div>
 
@@ -90,11 +89,11 @@ async function remove(): Promise<void> {
           <span>{{ formatDateFull(record.watchedDate) }}</span>
         </div>
         <div class="row">
-          <span class="label">地点</span>
+          <span class="label">在哪看</span>
           <span>{{ LOCATION_EMOJI[record.location] ?? '📍' }} {{ record.location }}</span>
         </div>
         <div v-if="record.members.length" class="row">
-          <span class="label">成员</span>
+          <span class="label">一起看</span>
           <span class="members">
             <em v-for="member in record.members" :key="member">{{ member }}</em>
           </span>
@@ -182,19 +181,6 @@ async function remove(): Promise<void> {
 .sub {
   font-size: var(--t-14);
   color: var(--c-text-2);
-}
-
-.auto-badge {
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-size: var(--t-12);
-  color: var(--c-primary-active);
-  background: var(--c-primary-weak);
-  border-radius: 999px;
-  padding: 2px 8px;
-  margin-top: auto;
 }
 
 .info-card {

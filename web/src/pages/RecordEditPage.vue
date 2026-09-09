@@ -167,7 +167,6 @@ async function save(): Promise<void> {
           <p v-if="metaLine" class="sub">{{ metaLine }}</p>
           <p v-if="meta?.director" class="sub">导演：{{ meta.director }}</p>
           <p v-if="loadingMeta" class="sub"><van-loading size="14" /> 拉取影片信息…</p>
-          <span class="auto-badge">✨ 选片后自动填充 · 无需输入</span>
         </div>
       </div>
 
@@ -177,15 +176,15 @@ async function save(): Promise<void> {
         <div class="field-like" @click="openDatePicker">📅&nbsp; {{ dateLabel }}</div>
       </section>
 
-      <!-- ④ 地点 -->
+      <!-- ④ 在哪看 -->
       <section class="form-block">
-        <label>地点</label>
+        <label>在哪看</label>
         <LocationPicker v-model="form.location" />
       </section>
 
-      <!-- ⑤ 成员 -->
+      <!-- ⑤ 一起看 -->
       <section class="form-block">
-        <label>一起看的成员 <i>记住上次组合</i></label>
+        <label>一起看 <i>记住上次组合</i></label>
         <MemberChips v-model="form.members" />
       </section>
 
@@ -294,19 +293,6 @@ async function save(): Promise<void> {
   display: flex;
   align-items: center;
   gap: 4px;
-}
-
-.auto-badge {
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-size: var(--t-12);
-  color: var(--c-primary-active);
-  background: var(--c-primary-weak);
-  border-radius: 999px;
-  padding: 2px 8px;
-  margin-top: auto;
 }
 
 .form-block {

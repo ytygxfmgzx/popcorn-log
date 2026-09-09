@@ -55,7 +55,7 @@ async function confirmAdd(): Promise<void> {
       :style="{ maxWidth: '480px', left: '50%', transform: 'translateX(-50%)' }"
     >
       <div class="add-sheet">
-        <h3>添加常用地点</h3>
+        <h3>添加地点</h3>
         <van-field
           v-model="newLocation"
           placeholder="如：外婆家"
