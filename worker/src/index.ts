@@ -76,7 +76,7 @@ const handler: ExportedHandler<Env> = {
     }
 
     if (url.pathname === '/health') {
-      return new Response('ok');
+      return new Response('ok', { headers: CORS_HEADERS });
     }
 
     try {
