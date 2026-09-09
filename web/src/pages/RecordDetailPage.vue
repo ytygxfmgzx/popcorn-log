@@ -7,7 +7,7 @@ import { tombstoneRecord } from '@/db/records';
 import { useLiveQuery } from '@/composables/useLiveQuery';
 import PosterImage from '@/components/PosterImage.vue';
 import { getCachedMovie } from '@/services/tmdb';
-import { formatDateFull, formatRuntime } from '@/utils/date';
+import { formatDateFull, formatDateShort, formatRuntime } from '@/utils/date';
 import { LOCATION_EMOJI, type MovieMeta, type WatchRecord } from '@/types';
 
 const route = useRoute();
@@ -29,6 +29,35 @@ void (async () => {
 })();
 
 const stars = computed(() => '★★★★★'.slice(0, record.value?.rating ?? 0));
+
+/* 同片观看序列：重刷 ≥2 次显示「第 N 次」+ 其他场次直达 */
+const { data: allRecords } = useLiveQuery(() => db.records.toArray(), []);
+
+const viewings = computed(() => {
+  const current = record.value;
+  if (!current) return [];
+  return allRecords.value
+    .filter(
+      (item) => !item.deleted && item.mediaType === current.mediaType && item.tmdbId === current.tmdbId,
+    )
+    .sort((a, b) =>
+      a.watchedDate === b.watchedDate
+        ? a.updatedAt.localeCompare(b.updatedAt)
+        : a.watchedDate.localeCompare(b.watchedDate),
+    );
+});
+
+const viewingRank = computed(() => {
+  if (!record.value || viewings.value.length < 2) return null;
+  return {
+    rank: viewings.value.findIndex((item) => item.id === record.value?.id) + 1,
+    total: viewings.value.length,
+  };
+});
+
+const otherViewings = computed(() =>
+  viewings.value.filter((item) => item.id !== record.value?.id),
+);
 
 const metaLine = computed(() => {
   if (!meta.value) return '';
@@ -97,6 +126,20 @@ async function remove(): Promise<void> {
           <span class="members">
             <em v-for="member in record.members" :key="member">{{ member }}</em>
           </span>
+        </div>
+        <div v-if="viewingRank" class="row rewatches">
+          <span class="label">重刷</span>
+          <div class="rewatch-body">
+            <p class="rewatch-head">🎬 第 {{ viewingRank.rank }} / {{ viewingRank.total }} 次看这部片</p>
+            <span
+              v-for="item in otherViewings"
+              :key="item.id"
+              class="rewatch-item"
+              @click="router.push(`/record/${item.id}`)"
+            >
+              {{ formatDateShort(item.watchedDate) }} · {{ item.members.join('、') || '—' }} ›
+            </span>
+          </div>
         </div>
         <div v-if="record.rating" class="row">
           <span class="label">评分</span>
@@ -220,6 +263,29 @@ async function remove(): Promise<void> {
   border-radius: 999px;
   background: var(--c-primary-weak);
   color: var(--c-primary-active);
+}
+
+.rewatches {
+  align-items: baseline;
+}
+
+.rewatch-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rewatch-head {
+  font-size: var(--t-14);
+  color: var(--c-primary-active);
+}
+
+.rewatch-item {
+  font-size: var(--t-13);
+  color: var(--c-text-2);
+  cursor: pointer;
 }
 
 .stars {

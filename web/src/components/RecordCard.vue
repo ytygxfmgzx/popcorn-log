@@ -4,9 +4,12 @@ import PosterImage from '@/components/PosterImage.vue';
 import { useMovieMeta } from '@/composables/useMovieMeta';
 import { relativeDayLabel, formatDateShort } from '@/utils/date';
 import { LOCATION_EMOJI, type WatchRecord } from '@/types';
+import type { ViewingRank } from '@/stats/viewings';
 
 const props = defineProps<{
   record: WatchRecord;
+  /** 同片观看名次（首页统一计算传入；看过 ≥2 次才显示徽章） */
+  viewingRank?: ViewingRank;
 }>();
 
 const { meta: movieMeta } = useMovieMeta(
@@ -36,6 +39,10 @@ const locationLabel = computed(() => {
       <div class="title">
         {{ record.titleSnapshot }}
         <em v-if="movieMeta?.releaseYear">({{ movieMeta.releaseYear }})</em>
+        <span
+          v-if="viewingRank && viewingRank.total >= 2"
+          class="rewatch-badge"
+        >第 {{ viewingRank.rank }} 次</span>
       </div>
       <div class="meta-line">
         {{ formatDateShort(record.watchedDate) }} · {{ locationLabel }}
@@ -92,6 +99,17 @@ const locationLabel = computed(() => {
   color: var(--c-text-3);
   font-weight: 400;
   flex: none;
+}
+
+.rewatch-badge {
+  flex: none;
+  font-size: var(--t-11);
+  font-weight: 500;
+  color: var(--c-primary-active);
+  background: var(--c-primary-weak);
+  border-radius: 999px;
+  padding: 1px 7px;
+  transform: translateY(-1px);
 }
 
 .meta-line {

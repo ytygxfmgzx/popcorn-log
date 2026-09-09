@@ -4,6 +4,7 @@ import RecordEditPage from '@/pages/RecordEditPage.vue';
 import RecordDetailPage from '@/pages/RecordDetailPage.vue';
 import SettingsPage from '@/pages/SettingsPage.vue';
 import ConflictsPage from '@/pages/ConflictsPage.vue';
+import StatsPage from '@/pages/StatsPage.vue';
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -24,9 +25,8 @@ const router = createRouter({
     { path: '/record/:id/edit', name: 'record-edit', component: RecordEditPage },
     { path: '/settings', name: 'settings', component: SettingsPage, meta: { tabbar: 'settings' } },
     { path: '/conflicts', name: 'conflicts', component: ConflictsPage },
-    // 以下阶段路由占位：上线前回到首页
+    { path: '/stats', name: 'stats', component: StatsPage, meta: { tabbar: 'stats' } },
     { path: '/watchlist', redirect: '/' }, // Enhance 阶段：想看清单
-    { path: '/stats', redirect: '/' }, // Sync 阶段：统计
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 });

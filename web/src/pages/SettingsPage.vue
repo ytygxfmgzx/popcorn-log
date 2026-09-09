@@ -273,7 +273,7 @@ async function exportBackup(): Promise<void> {
       <h2 class="group-title">关于</h2>
       <div class="card group about">
         <p>Popcorn Log</p>
-        <p>v{{ appVersion }} · 统计开发中</p>
+        <p>v{{ appVersion }} · 想看清单规划中</p>
       </div>
     </main>
 

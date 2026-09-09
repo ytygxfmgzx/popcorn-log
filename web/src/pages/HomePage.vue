@@ -6,6 +6,7 @@ import { db } from '@/db/dexie';
 import { useLiveQuery } from '@/composables/useLiveQuery';
 import { useSyncStatus, useDuplicateGroups } from '@/composables/useSyncStatus';
 import { syncNow } from '@/sync/schedule';
+import { buildViewingRanks } from '@/stats/viewings';
 import RecordCard from '@/components/RecordCard.vue';
 import EmptyState from '@/components/EmptyState.vue';
 import SyncIndicator from '@/components/SyncIndicator.vue';
@@ -19,6 +20,9 @@ const { data: records, isLoading } = useLiveQuery<WatchRecord[]>(
 );
 
 const visible = computed(() => records.value);
+
+/* 同片观看名次：重刷 ≥2 次的卡片显示「第 N 次」徽章 */
+const viewingRanks = computed(() => buildViewingRanks(records.value));
 
 /* 同步指示器：真实底账状态 + 点击行为（未配置去设置，有冲突去处理，否则立即同步） */
 const { pendingCount, conflictCount, hasCredentials } = useSyncStatus();
@@ -86,6 +90,7 @@ const hintDismissed = ref(false);
           v-for="record in visible"
           :key="record.id"
           :record="record"
+          :viewing-rank="viewingRanks.get(record.id)"
           @click="router.push(`/record/${record.id}`)"
         />
         <EmptyState
