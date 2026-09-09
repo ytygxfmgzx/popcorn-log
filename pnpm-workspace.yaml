@@ -1,0 +1,8 @@
+packages:
+  - web
+  - worker
+
+# 允许执行安装脚本的依赖（esbuild/vite 与 workerd/wrangler 的原生二进制）
+allowBuilds:
+  esbuild: true
+  workerd: true

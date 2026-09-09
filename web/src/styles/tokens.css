@@ -1,0 +1,44 @@
+/**
+ * popcorn-log Design Tokens —— 唯一色彩/圆角/阴影来源
+ * 规范文档：docs/design-system.md（demo 确认稿 ref/design-demo/index.html）
+ * 页面与组件禁止出现 token 之外的硬编码色值。
+ */
+:root {
+  /* 色彩 */
+  --c-primary: #F97316;        /* 主色 · 暖橙 */
+  --c-primary-active: #EA6A0C; /* 主色按压 */
+  --c-primary-weak: #FFF1E5;   /* 主色弱底 · 选中 chips / 海报占位 */
+  --c-bg: #FFF9F2;             /* 页面背景 · 奶油 */
+  --c-card: #FFFFFF;           /* 卡片 / 弹层 */
+  --c-text: #3D2E23;           /* 主文字 · 暖棕黑 */
+  --c-text-2: #8C7B6E;         /* 次文字 · 暖棕灰 */
+  --c-text-3: #C4B5A8;         /* 占位 / 时间戳 / 禁用 */
+  --c-border: #F0E4D7;         /* 分割线 / 描边 */
+  --c-success: #10B981;        /* 成功 / 已同步 */
+  --c-warning: #F5A623;        /* 警告 / 待同步 */
+  --c-danger: #EF4444;         /* 危险 / 删除 / 冲突 */
+  --c-star: #F5A623;           /* 评分星 · 金 */
+  --c-star-off: #EBDFCE;       /* 未选中星 */
+  --c-mask: rgba(61, 46, 35, 0.45); /* 弹层遮罩 */
+
+  /* 圆角 */
+  --r-card: 12px;   /* 卡片 */
+  --r-btn: 8px;     /* 按钮 / 输入 */
+  --r-sheet: 16px;  /* 弹层顶部 */
+
+  /* 阴影（卡片仅一档，不叠重影） */
+  --shadow-card: 0 1px 4px rgba(61, 46, 35, 0.08);
+  --shadow-fab: 0 4px 12px rgba(249, 115, 22, 0.4);
+
+  /* 字体 */
+  --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC",
+               "Helvetica Neue", "Segoe UI", "Microsoft YaHei", sans-serif;
+
+  /* 字阶 */
+  --t-28: 28px;
+  --t-20: 20px;
+  --t-17: 17px;
+  --t-15: 15px;
+  --t-14: 14px;
+  --t-12: 12px;
+}

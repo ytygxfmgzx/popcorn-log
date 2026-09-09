@@ -1,0 +1,25 @@
+{
+  "name": "popcorn-log",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "家庭观影记忆手账 PWA（web 前端 + Cloudflare Worker 转发层）",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "pnpm --filter web dev",
+    "dev:worker": "pnpm --filter worker dev",
+    "build": "pnpm -r build",
+    "test": "pnpm --filter web test",
+    "lint": "eslint .",
+    "typecheck": "pnpm -r typecheck",
+    "deploy:worker": "pnpm --filter worker deploy"
+  },
+  "devDependencies": {
+    "@vue/eslint-config-typescript": "^14.0.0",
+    "eslint": "^9.0.0",
+    "eslint-plugin-vue": "^10.0.0",
+    "typescript-eslint": "^8.0.0"
+  }
+}
