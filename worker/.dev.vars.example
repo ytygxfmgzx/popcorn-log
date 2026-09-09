@@ -1,2 +1,6 @@
-# 复制为 .dev.vars（已 gitignore，不入库）并填入你的 TMDB API Key(v3)
+# 复制为 .dev.vars（已 gitignore，不入库）并按需填入：
+#   TMDB_API_KEY：搜片必需
+#   SYNC_PASSWORD：本地调试云同步必需（wrangler dev 读不到线上 secret；
+#     开发时手机/浏览器「设置 → 云同步」填同一个值）
 TMDB_API_KEY=your_tmdb_v3_api_key
+SYNC_PASSWORD=dev-sync-password

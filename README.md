@@ -140,7 +140,9 @@ pnpm install
 
 # 1. 配置 Worker 本地密钥
 cp worker/.dev.vars.example worker/.dev.vars
-#    编辑 worker/.dev.vars，填入 TMDB_API_KEY=你的Key（此文件不入库）
+#    编辑 worker/.dev.vars，填入 TMDB_API_KEY=你的Key；
+#    本地调试云同步再加一行 SYNC_PASSWORD=任意口令（手机「设置→云同步」填同一个值）
+#    （此文件不入库）
 
 # 2. 终端 A：启动 Worker（本地转发层，端口 8787）
 pnpm dev:worker
@@ -306,5 +308,6 @@ popcorn-log/
 - TMDB Key 与同步密码存 Cloudflare Worker 环境变量（secret），前端与仓库内零密钥
 - 默认方式下 R2 存储密钥不出服务端（Worker 内部绑定）；直连 S3 模式务必使用最小权限子账号并开启桶版本化
 - Worker 无状态不存储；同步 API 仅允许 records/ 与 config.json 两种 key，密码认证 + 乐观锁防并发覆盖
+- 已知取舍：/tmdb 与 /image 转发未设门禁（依赖地址私有；即使被刷爆仅当日停用、次日恢复、零费用，不涉及任何私有数据）
 - 删除采用墓碑机制（软删除），可恢复
 - 全链路 HTTPS
