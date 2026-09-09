@@ -7,15 +7,22 @@ export interface DuplicateGroup {
   records: WatchRecord[];
 }
 
+/** 疑似重复组 key：watchedDate|mediaType|tmdbId（设置页 hiddenDuplicateKeys 存同款 key） */
+export function duplicateGroupKey(record: Pick<WatchRecord, 'watchedDate' | 'mediaType' | 'tmdbId'>): string {
+  return `${record.watchedDate}|${record.mediaType}|${record.tmdbId}`;
+}
+
 /**
  * 疑似重复判定：同一观影日期 + 同一部影片 + 均未删除 + 不同 id
  * （Sync 阶段对账后用于"合并为全家记录 / 保留两条"软合并提示）
+ * hiddenKeys：用户已确认「是两场，都保留」的组，不再提示
  */
-export function findDuplicateGroups(records: WatchRecord[]): DuplicateGroup[] {
+export function findDuplicateGroups(records: WatchRecord[], hiddenKeys: string[] = []): DuplicateGroup[] {
   const groups = new Map<string, WatchRecord[]>();
   for (const record of records) {
     if (record.deleted) continue;
-    const key = `${record.watchedDate}|${record.mediaType}|${record.tmdbId}`;
+    const key = duplicateGroupKey(record);
+    if (hiddenKeys.includes(key)) continue;
     const bucket = groups.get(key);
     if (bucket) {
       bucket.push(record);

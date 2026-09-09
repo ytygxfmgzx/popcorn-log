@@ -1,12 +1,18 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
+import { useRouter } from 'vue-router';
 import { showConfirmDialog, showToast } from 'vant';
 import { apiBase } from '@/services/api';
+import { verifyCredentials } from '@/services/dav';
+import { getCredentials, saveCredentials } from '@/db/credentials';
 import { buildBackup, downloadBackup } from '@/services/backup';
 import { getAppSettings } from '@/db/settings';
 import { useAppSettings } from '@/composables/useAppSettings';
+import { useDuplicateGroups, useSyncStatus } from '@/composables/useSyncStatus';
+import { syncNow } from '@/sync/schedule';
 import { PRESET_LOCATIONS } from '@/types';
 
+const router = useRouter();
 const { settings, save } = useAppSettings();
 
 const appVersion = __APP_VERSION__;
@@ -19,6 +25,9 @@ const testing = ref(false);
 onMounted(async () => {
   const appSettings = await getAppSettings();
   workerUrlInput.value = appSettings.workerUrl ?? '';
+  const credentials = await getCredentials();
+  jgyAccount.value = credentials.jianguayunAccount ?? '';
+  jgyPassword.value = credentials.jianguayunAppPassword ?? '';
 });
 
 async function saveWorkerUrl(): Promise<void> {
@@ -40,6 +49,75 @@ async function testConnection(): Promise<void> {
     showToast('连接失败，请检查地址与网络');
   } finally {
     testing.value = false;
+  }
+}
+
+/* ---- 云同步（坚果云） ---- */
+const jgyAccount = ref('');
+const jgyPassword = ref('');
+const testingCreds = ref(false);
+const syncing = ref(false);
+
+const { pendingCount, conflictCount } = useSyncStatus();
+const { groups: duplicateGroups } = useDuplicateGroups();
+
+const statusLine = computed(() => {
+  const parts: string[] = [];
+  if (pendingCount.value) parts.push(`待同步 ${pendingCount.value}`);
+  if (conflictCount.value) parts.push(`冲突 ${conflictCount.value}`);
+  if (duplicateGroups.value.length) parts.push(`疑似重复 ${duplicateGroups.value.length} 组`);
+  if (!parts.length) return '状态正常';
+  return parts.join(' · ') + (hasPendingWork.value ? ' ›' : '');
+});
+
+const hasPendingWork = computed(
+  () => conflictCount.value > 0 || duplicateGroups.value.length > 0,
+);
+
+const lastSyncedLabel = computed(() => {
+  const at = settings.value.lastSyncedAt;
+  if (!at) return '从未';
+  const date = new Date(at);
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mm = String(date.getMinutes()).padStart(2, '0');
+  return `${date.getMonth() + 1}月${date.getDate()}日 ${hh}:${mm}`;
+});
+
+async function testAndSaveCredentials(): Promise<void> {
+  const account = jgyAccount.value.trim();
+  if (!account || !jgyPassword.value) {
+    showToast('请填写坚果云账号与应用密码');
+    return;
+  }
+  await saveCredentials({ jianguayunAccount: account, jianguayunAppPassword: jgyPassword.value });
+  testingCreds.value = true;
+  try {
+    await verifyCredentials();
+    showToast('连接成功 ✅');
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : '连接失败');
+  } finally {
+    testingCreds.value = false;
+  }
+}
+
+async function syncImmediately(): Promise<void> {
+  syncing.value = true;
+  try {
+    const summary = await syncNow();
+    if (!summary) {
+      showToast('请先填写并保存坚果云账号');
+      return;
+    }
+    if (summary.conflicts > 0) {
+      showToast(`同步完成，${summary.conflicts} 条冲突待处理`);
+    } else {
+      showToast('同步完成 ✅');
+    }
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : '同步失败');
+  } finally {
+    syncing.value = false;
   }
 }
 
@@ -152,6 +230,34 @@ async function exportBackup(): Promise<void> {
         </p>
       </div>
 
+      <!-- 云同步 -->
+      <h2 class="group-title">云同步</h2>
+      <div class="card group">
+        <van-field v-model="jgyAccount" label="坚果云账号" placeholder="you@example.com" />
+        <van-field
+          v-model="jgyPassword"
+          type="password"
+          label="应用密码"
+          placeholder="坚果云网页版 → 账户信息 → 安全选项 → 添加应用密码"
+        />
+        <button class="row-add" :loading="testingCreds" @click="testAndSaveCredentials">
+          🔑 测试并保存
+        </button>
+        <button class="row-add" :loading="syncing" @click="syncImmediately">
+          ⇅ 立即同步
+        </button>
+        <p
+          class="group-hint"
+          :class="{ 'status-link': hasPendingWork }"
+          @click="hasPendingWork && router.push('/conflicts')"
+        >
+          {{ statusLine }} · 最近同步：{{ lastSyncedLabel }}
+        </p>
+        <p class="group-hint">
+          账号与应用密码只存这台手机；两台手机登录同一坚果云账号即可共享全部记录与配置。
+        </p>
+      </div>
+
       <!-- 数据 -->
       <h2 class="group-title">数据</h2>
       <div class="card group">
@@ -167,7 +273,7 @@ async function exportBackup(): Promise<void> {
       <h2 class="group-title">关于</h2>
       <div class="card group about">
         <p>Popcorn Log</p>
-        <p>v{{ appVersion }} · 云同步与统计开发中</p>
+        <p>v{{ appVersion }} · 统计开发中</p>
       </div>
     </main>
 
@@ -287,6 +393,11 @@ async function exportBackup(): Promise<void> {
   color: var(--c-text-3);
   padding: 8px 16px;
   line-height: 1.6;
+}
+
+.group-hint.status-link {
+  color: var(--c-primary-active);
+  cursor: pointer;
 }
 
 .about {

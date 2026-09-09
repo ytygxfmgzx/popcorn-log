@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import UpdatePrompt from '@/components/UpdatePrompt.vue';
+import { setupAutoSync } from '@/sync/schedule';
 
 const route = useRoute();
 const router = useRouter();
@@ -12,6 +13,9 @@ function onTabChange(name: string | number): void {
   if (name === 'home') void router.push('/');
   if (name === 'settings') void router.push('/settings');
 }
+
+// 切到前台 / 网络恢复自动同步（未配置凭据时引擎内部静默跳过）
+onMounted(setupAutoSync);
 </script>
 
 <template>

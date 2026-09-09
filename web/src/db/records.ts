@@ -1,5 +1,6 @@
 import { db } from '@/db/dexie';
 import { recordCloudFile } from '@/utils/filename';
+import { notifyLocalChange } from '@/sync/schedule';
 import type { WatchRecord } from '@/types';
 
 /**
@@ -20,6 +21,7 @@ export async function saveRecord(record: WatchRecord): Promise<void> {
       pendingOp,
     });
   });
+  notifyLocalChange();
 }
 
 /**
@@ -42,4 +44,5 @@ export async function tombstoneRecord(record: WatchRecord): Promise<void> {
       pendingOp: 'delete',
     });
   });
+  notifyLocalChange();
 }

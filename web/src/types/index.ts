@@ -75,10 +75,31 @@ export interface SyncState {
 export interface AppSettings {
   /** 空 = 同源（开发经 vite proxy；生产填 workers.dev 域名） */
   workerUrl?: string;
-  /** MVP 存本地，Sync 迁移 members.json */
+  /** 与云端 config.json 对账（并集合并），非本地独占 */
   members: string[];
   customLocations: string[];
   lastMembersCombo?: string[];
+  /** 云端 config.json 的 etag 底账（整文件 If-Match 用） */
+  configEtag?: string;
+  /** 上次 config 对账完成时的本地快照，用于脏检测（相对快照有变化才上传） */
+  configSyncedSnapshot?: CloudConfig;
+  /** 用户已确认「是两场，都保留」的疑似重复组 key（watchedDate|mediaType|tmdbId），不再提示 */
+  hiddenDuplicateKeys?: string[];
+  /** 最近一次同步完成时间（ISO UTC，仅簿记展示） */
+  lastSyncedAt?: string;
+}
+
+/** 云端共享配置（/popcorn-log/config.json，低频整文件 + If-Match） */
+export interface CloudConfig {
+  members: string[];
+  customLocations: string[];
+}
+
+/** 云端文件清单条目（PROPFIND Depth:1 解析结果） */
+export interface CloudFileMeta {
+  /** records/YYYY-MM-DD_<uuid>.json 或 config.json */
+  file: string;
+  etag?: string;
 }
 
 /** 坚果云凭据（存 settings 表 key='credentials'，仅本机；Sync 阶段使用） */
