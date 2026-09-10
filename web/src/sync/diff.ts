@@ -11,7 +11,7 @@ export interface RemoteDiff {
 /**
  * 纯函数：逐行比指纹。
  * - 云端有、本地底账无 → 下载（对方新记的 / 新手机首次全量）
- * - etag 不一致 → 下载（对方改过 / 对方删除过=墓碑版本）
+ * - etag 不一致 → 下载（对方改过）
  * - etag 一致 → 跳过（零流量）
  * - 底账 etag 缺失 → 下载（宁可多拉一次，不做错决定）
  */
@@ -31,6 +31,22 @@ export function diffRemote(remote: CloudFileMeta[], localStates: SyncState[]): R
     }
   }
   return { toDownload, remoteFiles };
+}
+
+/**
+ * 云端删除跟随：本地已 synced 且云端清单中已消失的记录 → 需物理删除本地（返回 recordId）。
+ * - pending 不跟随：create 云端本就没有；update/delete 是本地明确意图，交给 pushPhase
+ * - conflict 不跟随：保留人工裁决现场
+ * - 清单为空视为异常信号（误配桶/清空桶），全部跳过，防全量误删本地
+ */
+export function planRemoteDeletions(remote: CloudFileMeta[], localStates: SyncState[]): string[] {
+  if (remote.length === 0) return [];
+  const remoteFiles = new Set(remote.map((meta) => meta.file));
+  return localStates
+    .filter(
+      (state) => state.cloudFile && state.status === 'synced' && !remoteFiles.has(state.cloudFile),
+    )
+    .map((state) => state.recordId);
 }
 
 /** 分批（首次全量 >50 条时 20 条/批，批间停顿，防一次打满 WebDAV 服务限额） */

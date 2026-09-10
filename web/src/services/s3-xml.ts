@@ -13,17 +13,29 @@ const defaultParser: XmlParser | undefined =
     ? (xml) => new DOMParser().parseFromString(xml, 'text/xml')
     : undefined;
 
-export function parseListObjectsXml(
+/** ListObjectsV2 一页的解析结果：文件清单 + 截断时的下一页游标 */
+export interface ListObjectsPage {
+  files: CloudFileMeta[];
+  /** IsTruncated=true 时 S3 返回 NextContinuationToken；未截断时为空 */
+  nextToken?: string;
+}
+
+export function parseListObjectsPage(
   xml: string,
   parse: XmlParser = defaultParser ?? failNoParser,
-): CloudFileMeta[] {
+): ListObjectsPage {
   const doc = parse(xml);
   if (doc.getElementsByTagName('parsererror').length > 0) {
     throw new Error('云端清单 XML 解析失败');
   }
 
   const result: CloudFileMeta[] = [];
+  let nextToken: string | undefined;
   for (const node of doc.getElementsByTagName('*')) {
+    if (node.localName === 'NextContinuationToken') {
+      nextToken = node.textContent?.trim() || undefined;
+      continue;
+    }
     if (node.localName !== 'Contents') continue;
     let key = '';
     let etag: string | undefined;
@@ -35,7 +47,14 @@ export function parseListObjectsXml(
     }
     if (key) result.push({ file: key, etag });
   }
-  return result;
+  return { files: result, nextToken };
+}
+
+export function parseListObjectsXml(
+  xml: string,
+  parse: XmlParser = defaultParser ?? failNoParser,
+): CloudFileMeta[] {
+  return parseListObjectsPage(xml, parse).files;
 }
 
 /** 从 endpoint 主机名推断 SigV4 region（纯函数，spec 覆盖） */

@@ -1,6 +1,6 @@
 import { db } from '@/db/dexie';
 import { getAppSettings, saveAppSettings } from '@/db/settings';
-import { saveRecord, tombstoneRecord } from '@/db/records';
+import { saveRecord, deleteRecord } from '@/db/records';
 import { getCloudStore } from '@/services/cloud';
 import { normalizeRemoteRecord, softMerge } from './merge';
 import { recordCloudFile } from '@/utils/filename';
@@ -8,7 +8,7 @@ import type { SyncState, WatchRecord } from '@/types';
 
 /**
  * 冲突与疑似重复的人工裁决动作（/conflicts 页调用）
- * 三条铁律：绝不静默丢数据；裁决后即恢复该条同步；墓碑可恢复。
+ * 三条铁律：绝不静默丢数据；裁决后即恢复该条同步；删除即物理删除。
  */
 
 async function loadPair(recordId: string): Promise<{
@@ -80,7 +80,7 @@ export async function resolveConflictMerge(recordId: string): Promise<void> {
 
 /**
  * 疑似重复-软合并：组内逐对 softMerge（较新者为主体，成员并集、手记拼接），
- * 其余全部置墓碑；复用 saveRecord/tombstoneRecord 标 pending，随下轮同步上云。
+ * 其余全部物理删除；复用 saveRecord/deleteRecord 标 pending，随下轮同步上云/删云端。
  * 支持三人各记一场的 >2 条场景。
  */
 export async function mergeDuplicate(recordIds: string[]): Promise<void> {
@@ -94,7 +94,7 @@ export async function mergeDuplicate(recordIds: string[]): Promise<void> {
     const merged = softMerge(keep, current);
     const drop = keep.id === merged.id ? current : keep;
     await saveRecord(merged);
-    await tombstoneRecord(drop);
+    await deleteRecord(drop.id);
     keep = merged;
   }
 }

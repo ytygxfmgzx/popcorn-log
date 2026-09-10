@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chunk, diffRemote } from './diff';
+import { chunk, diffRemote, planRemoteDeletions } from './diff';
 import type { CloudFileMeta, SyncState } from '@/types';
 
 function state(cloudFile: string, cloudEtag?: string, status: SyncState['status'] = 'synced'): SyncState {
@@ -36,6 +36,44 @@ describe('diffRemote', () => {
   it('本地全部同步过且无变化 → 零下载', () => {
     const local: SyncState[] = remote.map((m) => state(m.file, m.etag));
     expect(diffRemote(remote, local).toDownload).toEqual([]);
+  });
+});
+
+describe('planRemoteDeletions', () => {
+  const remote: CloudFileMeta[] = [
+    { file: 'records/a.json', etag: 'v1' },
+    { file: 'records/b.json', etag: 'v2' },
+  ];
+
+  it('synced 且云端清单已消失 → 跟随删除本地', () => {
+    const local: SyncState[] = [
+      state('records/a.json', 'v1'),
+      state('records/gone.json', 'v0'), // 云端已被直接删除
+    ];
+    expect(planRemoteDeletions(remote, local)).toEqual(['id-records/gone.json']);
+  });
+
+  it('pending 不跟随（create 云端本就没有；update/delete 是本地明确意图）', () => {
+    const local: SyncState[] = [
+      state('records/gone.json', undefined, 'pending'), // create：从未上云
+      { recordId: 'r2', cloudFile: 'records/gone.json', cloudEtag: 'v1', status: 'pending', pendingOp: 'update' },
+    ];
+    expect(planRemoteDeletions(remote, local)).toEqual([]);
+  });
+
+  it('conflict 不跟随（保留人工裁决现场）', () => {
+    const local: SyncState[] = [state('records/gone.json', 'v1', 'conflict')];
+    expect(planRemoteDeletions(remote, local)).toEqual([]);
+  });
+
+  it('安全阀：云端清单为空 → 全部跳过（防误配桶/清空桶全量误删）', () => {
+    const local: SyncState[] = [state('records/a.json', 'v1'), state('records/b.json', 'v2')];
+    expect(planRemoteDeletions([], local)).toEqual([]);
+  });
+
+  it('无 cloudFile 的底账不参与对账', () => {
+    const local: SyncState[] = [{ recordId: 'r0', status: 'synced' }];
+    expect(planRemoteDeletions(remote, local)).toEqual([]);
   });
 });
 

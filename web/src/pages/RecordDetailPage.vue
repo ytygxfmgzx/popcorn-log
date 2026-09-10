@@ -3,7 +3,7 @@ import { computed, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { showConfirmDialog, showToast } from 'vant';
 import { db } from '@/db/dexie';
-import { tombstoneRecord } from '@/db/records';
+import { deleteRecord } from '@/db/records';
 import { useLiveQuery } from '@/composables/useLiveQuery';
 import PosterImage from '@/components/PosterImage.vue';
 import { getCachedMovie } from '@/services/tmdb';
@@ -78,7 +78,7 @@ async function remove(): Promise<void> {
   try {
     await showConfirmDialog({
       title: '删除这条观影记忆？',
-      message: '删除后仍保留云端档案，可恢复',
+      message: '删除后本地与云端都会移除，不可恢复',
       confirmButtonText: '删除',
       confirmButtonColor: 'var(--c-danger)',
       cancelButtonText: '再想想',
@@ -86,7 +86,7 @@ async function remove(): Promise<void> {
   } catch {
     return; // 用户取消
   }
-  await tombstoneRecord(current);
+  await deleteRecord(current.id);
   showToast('已删除');
   void router.replace('/');
 }

@@ -10,11 +10,9 @@ describe('planPush', () => {
     expect(planPush(state, record)).toEqual({ file: 'records/2026-09-09_r1.json', ifMatch: undefined });
   });
 
-  it('update/delete：携带本地 etag 乐观锁', () => {
-    for (const pendingOp of ['update', 'delete'] as const) {
-      const state: SyncState = { recordId: 'r1', cloudFile: 'records/x.json', cloudEtag: 'v1', status: 'pending', pendingOp };
-      expect(planPush(state, record)).toEqual({ file: 'records/x.json', ifMatch: 'v1' });
-    }
+  it('update：携带本地 etag 乐观锁（delete 意向不经 planPush，由 pushPhase 直接 DELETE）', () => {
+    const state: SyncState = { recordId: 'r1', cloudFile: 'records/x.json', cloudEtag: 'v1', status: 'pending', pendingOp: 'update' };
+    expect(planPush(state, record)).toEqual({ file: 'records/x.json', ifMatch: 'v1' });
   });
 
   it('底账缺 cloudFile 时按记录现算（MVP 存量数据）', () => {

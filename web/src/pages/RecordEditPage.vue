@@ -134,7 +134,6 @@ async function save(): Promise<void> {
     note: form.note.trim() || undefined,
     quote: form.quote.trim() || undefined,
     updatedAt: now,
-    deleted: false,
   };
 
   await saveRecord(record);

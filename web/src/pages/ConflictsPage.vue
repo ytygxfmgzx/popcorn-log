@@ -102,7 +102,7 @@ function onMergeGroup(records: WatchRecord[]): void {
     try {
       await showConfirmDialog({
         title: '合并成一条？',
-        message: '保留较新一条为主体，成员取并集，手记拼接；其余移为墓碑（可恢复）。',
+        message: '保留较新一条为主体，成员取并集，手记拼接；其余将被删除（本地与云端，不可恢复）。',
         confirmButtonText: '合并',
       });
     } catch {

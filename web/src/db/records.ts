@@ -25,24 +25,40 @@ export async function saveRecord(record: WatchRecord): Promise<void> {
 }
 
 /**
- * 删除记录 = 墓碑标记（deleted: true 上传云端，永不物理删除云端文件，可恢复）
+ * 删除记录 = 物理删除：本地删行，底账转 delete 意向（保留 cloudFile 供 push 删云端对象）。
+ * 从未上过云（底账无 cloudFile）则无需意向，直接删净。
  */
-export async function tombstoneRecord(record: WatchRecord): Promise<void> {
-  const deleted: WatchRecord = {
-    ...record,
-    deleted: true,
-    updatedAt: new Date().toISOString(),
-  };
-  await db.transaction('rw', db.records, db.syncStates, async () => {
-    const existing = await db.syncStates.get(record.id);
-    await db.records.put(deleted);
-    await db.syncStates.put({
-      recordId: record.id,
-      cloudFile: recordCloudFile(deleted),
-      cloudEtag: existing?.cloudEtag,
-      status: 'pending',
-      pendingOp: 'delete',
-    });
-  });
+export async function deleteRecord(id: string): Promise<void> {
+  await applyDelete(id);
   notifyLocalChange();
+}
+
+/** 删除的事务主体（deleteRecord 与存量墓碑迁移共用；不触发自动同步） */
+async function applyDelete(id: string): Promise<void> {
+  await db.transaction('rw', db.records, db.syncStates, async () => {
+    const existing = await db.syncStates.get(id);
+    await db.records.delete(id);
+    if (existing?.cloudFile) {
+      await db.syncStates.put({
+        recordId: id,
+        cloudFile: existing.cloudFile,
+        cloudEtag: existing.cloudEtag,
+        status: 'pending',
+        pendingOp: 'delete',
+      });
+    } else {
+      await db.syncStates.delete(id);
+    }
+  });
+}
+
+/**
+ * 存量墓碑迁移（幂等）：旧协议的 deleted:true 记录 → 物理删除本地，
+ * 底账转 delete 意向，随下一轮 push 物理清掉云端墓碑文件。
+ */
+export async function migrateLegacyTombstones(): Promise<void> {
+  const legacy = await db.records.filter((record) => record.deleted === true).toArray();
+  for (const record of legacy) {
+    await applyDelete(record.id);
+  }
 }

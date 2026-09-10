@@ -31,7 +31,7 @@ const FORWARD_REQUEST_HEADERS = ['accept'];
 
 const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, PUT, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, PUT, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Authorization, Content-Type',
   // 同步协议依赖浏览器 JS 读取 etag，必须显式暴露
   'Access-Control-Expose-Headers': 'ETag',
@@ -89,16 +89,20 @@ async function handleSync(request: Request, env: Env, url: URL): Promise<Respons
   const key = url.searchParams.get('key') ?? '';
   const action = url.pathname;
 
-  // 清单：ListObjectsV2 语义，一页全量（家庭量级远小于 1000）
+  // 清单：ListObjectsV2 语义，cursor 循环拉全量（前端「云端删除跟随」依赖完整清单做对账）
   if (request.method === 'GET' && action === '/sync/list') {
     const prefix = url.searchParams.get('prefix');
     if (prefix !== 'records/' && prefix !== 'config.json') {
       return errorResponse('不支持的 prefix', 400);
     }
-    const listed = await env.BUCKET.list({ prefix, limit: 1000 });
-    return jsonResponse({
-      files: listed.objects.map((object) => ({ key: object.key, etag: object.etag })),
-    });
+    const files: { key: string; etag: string }[] = [];
+    let cursor: string | undefined;
+    do {
+      const listed = await env.BUCKET.list({ prefix, limit: 1000, cursor });
+      files.push(...listed.objects.map((object) => ({ key: object.key, etag: object.etag })));
+      cursor = listed.truncated ? listed.cursor : undefined;
+    } while (cursor);
+    return jsonResponse({ files });
   }
 
   // 下载
@@ -118,6 +122,13 @@ async function handleSync(request: Request, env: Env, url: URL): Promise<Respons
     const result = await env.BUCKET.put(key, body, options);
     if (!result) return errorResponse('云端已被对方先修改', 412);
     return jsonResponse({ etag: result.etag });
+  }
+
+  // 删除（物理删除对象；幂等，对象不存在也返回成功）
+  if (request.method === 'DELETE' && action === '/sync/file') {
+    if (!isAllowedKey(key)) return errorResponse(`不支持的 key: ${key}`, 403);
+    await env.BUCKET.delete(key);
+    return jsonResponse({ ok: true });
   }
 
   return errorResponse('not found', 404);

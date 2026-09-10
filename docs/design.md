@@ -12,7 +12,7 @@
 | 阶段 | 交付 | 状态 |
 |---|---|---|
 | MVP | 单机记录 + TMDB 搜片联动 + 海报缓存 + JSON 备份导出 + Worker + README | 本轮 |
-| Sync | 坚果云双人同步（etag 对账 / If-Match 冲突 / 墓碑 / 软合并）+ 基础统计 | 待启动 |
+| Sync | 云端双人同步（etag 对账 / If-Match 冲突 / 物理删除+云端删除跟随 / 软合并）+ 基础统计 | 待启动 |
 | Enhance | 想看清单 + 演员/导演榜单 + 时间轴 + 年度总结卡 + 语音输入 | 待启动 |
 
 ## 2. 总体架构
@@ -78,7 +78,7 @@ popcorn-log/
 |---|---|---|---|
 | 手账首页 | `/` | MVP | 记录卡片流（watchedDate 倒序）+ FAB + SyncIndicator + EmptyState |
 | 录入/编辑 | `/record/new`、`/record/:id/edit` | MVP | 零输入原则：搜片（唯一必打）→ 自动填充元数据卡 → 日期（默认今天）→ 地点三点选+自定义 → 成员勾选（记忆组合）→ 点星 → 手记/孩子原话 |
-| 记录详情 | `/record/:id` | MVP | 大海报 + 全元数据 + 编辑 / 删除（Dialog 确认，墓碑） |
+| 记录详情 | `/record/:id` | MVP | 大海报 + 全元数据 + 编辑 / 删除（Dialog 确认，物理删除本地与云端） |
 | 想看清单 | `/watchlist` | Enhance | 搜片即入列；「看过」跳录入页预填 |
 | 统计 | `/stats` | Sync/Enhance | 时间窗 + 组合筛选 + 总览卡 + 榜单反查 |
 | 设置 | `/settings` | MVP 起 | Worker 地址+测试连接；坚果云凭据（Sync）；成员/地点管理；导出备份；版本与更新 |
@@ -104,7 +104,7 @@ interface WatchRecord {
   note?: string         // 手记
   createdAt: string     // ISO UTC
   updatedAt: string     // ISO UTC
-  deleted: boolean      // 墓碑：删除=标记 true 上传，永不物理删除云端文件
+  deleted?: boolean     // 遗留墓碑标记（旧协议数据迁移用），物理删除协议下不再写入
 }
 
 interface MovieMeta {   // TMDB 元数据本地缓存，不随事件存云端
@@ -162,16 +162,18 @@ watchlist:  'id, addedAt'
 ## 7. 同步协议（Sync 阶段定稿，MVP 预埋）
 
 - **触发**：visibilitychange / 保存后 / online / 手动按钮；去抖 2s 合并；执行互斥
-- **拉取**：1 次 `PROPFIND Depth:1 /dav/popcorn-log/records/` → DOMParser 解析 XML → `(file, etag)` 清单 → 与 syncStates diff（纯函数）→ 仅 GET 新增/变更；墓碑文件标记 deleted 不显示
-- **推送**：pending 逐条 PUT；update/delete 携带 `If-Match: <本地 etag>`；`412` → 下载云端版标记 conflict 人工处理；成功记录响应 etag
+- **拉取**：清单（全量含分页）→ 与 syncStates diff（纯函数）→ 仅 GET 新增/变更；拉到遗留墓碑文件 → 物理清掉云端并删净本地
+- **推送**：pending 逐条 PUT；update 携带 `If-Match: <本地 etag>`；`412` → 标记 conflict 人工处理；成功记录响应 etag
+delete 意向（记录行已删、底账保留 cloudFile）→ DELETE 云端对象（幂等，404=成功），成功后清底账
 - **冲突预防**：拉取入库遇本地 pending 同 id → 标记 conflict，绝不静默覆盖
+- **云端删除跟随**：清单对账发现 synced 记录的云端文件已消失 → 物理删除本地；pending/conflict 不跟随（本地意图优先）；清单为空视为异常信号跳过（防误配桶全量误删）
 - **首次全量**：>50 条分批（20/批，批间停顿）+ 429/503 指数退避（1s/2s/4s，上限 3 次）
 - **重复识别**：`watchedDate 相同 + tmdbId 相同 + mediaType 相同 + 不同 id + 均未删` → 疑似重复 → 软合并弹层（保留较新主体 + 成员并集 + 手记拼接，可编辑确认）或保留两条
 - **MVP 预埋**：保存/删除即写 `syncStates` pending，Sync 上线后存量数据自动待推送；diff 与去重纯函数 MVP 已实现并测试
 
 ## 8. 统计引擎（Sync/Enhance）
 
-纯本地内存聚合（毫秒级、零网络、离线可用）：records（过滤墓碑+时间窗+筛选）join movies。
+纯本地内存聚合（毫秒级、零网络、离线可用）：records（时间窗+筛选）join movies。
 
 - 时间窗：本周/本月/半年/1 年/自定义（基于 watchedDate）
 - 筛选：成员多选（任一命中）/ 地点 / 类型（自动聚合自元数据）

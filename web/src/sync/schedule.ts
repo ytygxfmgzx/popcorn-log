@@ -12,7 +12,7 @@ const DEBOUNCE_MS = 2000;
 
 let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
-/** 本地数据有变动（saveRecord/tombstoneRecord 后调用），去抖后自动同步 */
+/** 本地数据有变动（saveRecord/deleteRecord 后调用），去抖后自动同步 */
 export function notifyLocalChange(): void {
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {

@@ -1,7 +1,7 @@
 import { AwsClient } from 'aws4fetch';
 import { CloudError, type CloudStore, type FetchedFile, type PutResult } from '@/services/cloud';
-import { inferS3Region, parseListObjectsXml } from '@/services/s3-xml';
-import type { Credentials } from '@/types';
+import { inferS3Region, parseListObjectsPage } from '@/services/s3-xml';
+import type { CloudFileMeta, Credentials } from '@/types';
 
 /**
  * 模式 B（高级）：浏览器直连任意 S3 兼容存储（阿里 OSS / 腾讯 COS / R2 S3 API / B2…）。
@@ -23,10 +23,11 @@ export function createS3Store(credentials: Credentials): CloudStore {
     return new URL(`${endpoint}/${bucket}/${key}`);
   }
 
-  function listUrl(): URL {
+  function listUrl(token?: string): URL {
     const url = new URL(`${endpoint}/${bucket}`);
     url.searchParams.set('list-type', '2');
     url.searchParams.set('prefix', 'records/');
+    if (token) url.searchParams.set('continuation-token', token);
     return url;
   }
 
@@ -52,10 +53,18 @@ export function createS3Store(credentials: Credentials): CloudStore {
   }
 
   return {
-    async listRecords(): Promise<{ file: string; etag?: string }[]> {
-      const resp = await signedFetch(listUrl());
-      if (!resp.ok) throw new CloudError(`拉取云端清单失败（${resp.status}）`, resp.status);
-      return parseListObjectsXml(await resp.text());
+    async listRecords(): Promise<CloudFileMeta[]> {
+      // continuation-token 循环拉全量（「云端删除跟随」依赖完整清单做对账，截断会误判删除）
+      const files: CloudFileMeta[] = [];
+      let token: string | undefined;
+      do {
+        const resp = await signedFetch(listUrl(token));
+        if (!resp.ok) throw new CloudError(`拉取云端清单失败（${resp.status}）`, resp.status);
+        const page = parseListObjectsPage(await resp.text());
+        files.push(...page.files);
+        token = page.nextToken;
+      } while (token);
+      return files;
     },
 
     async fetchFile(key: string): Promise<FetchedFile> {
@@ -72,6 +81,14 @@ export function createS3Store(credentials: Credentials): CloudStore {
       if (resp.status === 412) return { ok: false, conflict: true };
       if (!resp.ok) throw new CloudError(`上传 ${key} 失败（${resp.status}）`, resp.status);
       return { ok: true, etag: stripQuotes(resp.headers.get('ETag')), conflict: false };
+    },
+
+    async deleteFile(key) {
+      const resp = await signedFetch(objectUrl(key), { method: 'DELETE' });
+      // S3 DeleteObject 对不存在的对象也返回 204；404 一并视为成功（删除幂等）
+      if (!resp.ok && resp.status !== 404) {
+        throw new CloudError(`删除 ${key} 失败（${resp.status}）`, resp.status);
+      }
     },
 
     async verify(): Promise<void> {

@@ -74,6 +74,13 @@ export function createWorkerStore(credentials: Credentials): CloudStore {
       return { ok: true, etag: result.etag, conflict: false };
     },
 
+    async deleteFile(key) {
+      assertKey(key);
+      const resp = await syncFetch(`/sync/file?key=${encodeURIComponent(key)}`, { method: 'DELETE' });
+      // 404 = 对象本就不存在，删除幂等视为成功
+      if (!resp.ok && resp.status !== 404) await parseError(resp, `删除 ${key}`);
+    },
+
     async verify(): Promise<void> {
       const resp = await syncFetch('/sync/list?prefix=records/');
       if (!resp.ok) await parseError(resp, '连接');

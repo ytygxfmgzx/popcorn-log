@@ -24,8 +24,8 @@ export interface WatchRecord {
   createdAt: string;
   /** ISO UTC */
   updatedAt: string;
-  /** 墓碑：删除 = 标记 true 上传，永不物理删除云端文件 */
-  deleted: boolean;
+  /** 遗留墓碑标记（旧协议数据）：物理删除协议下不再写入，仅迁移与脏数据防御时读取 */
+  deleted?: boolean;
 }
 
 /** TMDB 元数据本地缓存（key = `${mediaType}:${tmdbId}`） */

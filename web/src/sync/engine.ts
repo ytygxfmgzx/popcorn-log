@@ -1,9 +1,10 @@
 import { db } from '@/db/dexie';
 import { getCredentials, isCredentialsComplete } from '@/db/credentials';
 import { getAppSettings, saveAppSettings } from '@/db/settings';
+import { migrateLegacyTombstones } from '@/db/records';
 import { getCloudStore, withBackoff, CloudError, type CloudStore, type PutResult } from '@/services/cloud';
 import { fetchAndCacheMovie } from '@/services/tmdb';
-import { chunk, diffRemote } from './diff';
+import { chunk, diffRemote, planRemoteDeletions } from './diff';
 import { mergeConfig, normalizeRemoteConfig, normalizeRemoteRecord } from './merge';
 import { recordCloudFile } from '@/utils/filename';
 import { movieKey, type CloudConfig, type SyncState, type WatchRecord } from '@/types';
@@ -21,7 +22,8 @@ export function isSyncing(): boolean {
 
 /* ---------------- 决策纯函数（spec 覆盖） ---------------- */
 
-/** 推送参数：create 直接 PUT；update/delete 携带 If-Match 乐观锁（etag 缺失退化为无锁直推） */
+/** 推送参数：create 直接 PUT；update 携带 If-Match 乐观锁（etag 缺失退化为无锁直推）。
+ *  delete 意向不经此函数，由 pushPhase 直接物理删除云端对象。 */
 export function planPush(state: SyncState, record: Pick<WatchRecord, 'watchedDate' | 'id'>): {
   file: string;
   ifMatch?: string;
@@ -52,6 +54,7 @@ export async function runSync(): Promise<SyncSummary | null> {
 
   running = true;
   try {
+    await migrateLegacyTombstones(); // 旧协议墓碑 → 物理删除意向，随本轮 push 清理
     const store = await getCloudStore();
     const summary: SyncSummary = { pushed: 0, pulled: 0, conflicts: 0 };
     await pullPhase(store, summary);
@@ -64,11 +67,19 @@ export async function runSync(): Promise<SyncSummary | null> {
   }
 }
 
-/** 拉取：1 次清单 → 与底账 diff → 仅下载新增/变更（分批 + 退避） */
+/** 拉取：1 次清单 → 与底账 diff → 仅下载新增/变更（分批 + 退避）→ 云端已消失的 synced 记录跟随删除本地 */
 async function pullPhase(store: CloudStore, summary: SyncSummary): Promise<void> {
   const remote = await withBackoff(() => store.listRecords());
   const localStates = await db.syncStates.toArray();
   const { toDownload } = diffRemote(remote, localStates);
+
+  // 云端删除跟随：synced 且清单中已消失 → 物理删本地（安全阀与 pending/conflict 例外见 planRemoteDeletions）
+  for (const recordId of planRemoteDeletions(remote, localStates)) {
+    await db.transaction('rw', db.records, db.syncStates, async () => {
+      await db.records.delete(recordId);
+      await db.syncStates.delete(recordId);
+    });
+  }
 
   const batches = chunk(toDownload, 20);
   for (const [index, batch] of batches.entries()) {
@@ -76,9 +87,22 @@ async function pullPhase(store: CloudStore, summary: SyncSummary): Promise<void>
     for (const meta of batch) {
       await withBackoff(async () => {
         const fetched = await store.fetchFile(meta.file);
-        if (!fetched.text) return; // 对方物理删除（协议内不会，防御）
+        if (!fetched.text) return; // 清单后、下载前被对方删掉，本轮跳过，下轮对账跟随
         const record = normalizeRemoteRecord(safeJsonParse(fetched.text));
         if (!record) return; // 脏数据跳过，不炸整轮同步
+
+        if (record.deleted) {
+          // 遗留墓碑文件：物理清掉云端；本地 synced/不存在则一并删净，pending 则留给 push 转 412 冲突
+          await store.deleteFile(meta.file);
+          const localState = await db.syncStates.get(record.id);
+          if (!localState || localState.status !== 'pending') {
+            await db.transaction('rw', db.records, db.syncStates, async () => {
+              await db.records.delete(record.id);
+              await db.syncStates.delete(record.id);
+            });
+          }
+          return;
+        }
 
         const localState = await db.syncStates.get(record.id);
         if (localState && decidePull(localState) === 'conflict') {
@@ -102,13 +126,22 @@ async function pullPhase(store: CloudStore, summary: SyncSummary): Promise<void>
   }
 }
 
-/** 推送：pending 逐条上传；412 → 标 conflict 等人工裁决 */
+/** 推送：pending 逐条上传；delete 意向物理删云端对象；412 → 标 conflict 等人工裁决 */
 async function pushPhase(store: CloudStore, summary: SyncSummary): Promise<void> {
   const pendingStates = await db.syncStates.filter((state) => state.status === 'pending').toArray();
   for (const state of pendingStates) {
+    if (state.pendingOp === 'delete') {
+      // 删除意向：物理删云端对象（404 = 本就不存在，幂等成功），成功后清底账；
+      // 失败抛错保留底账下轮重试（防云端残留被下轮 pull 拉回复活）
+      await withBackoff(async () => {
+        if (state.cloudFile) await store.deleteFile(state.cloudFile);
+        await db.syncStates.delete(state.recordId);
+      });
+      continue;
+    }
     const record = await db.records.get(state.recordId);
     if (!record) {
-      // 底账有、记录无的异常残留，清掉
+      // 底账有、记录无且非删除意向的异常残留，清掉
       await db.syncStates.delete(state.recordId);
       continue;
     }

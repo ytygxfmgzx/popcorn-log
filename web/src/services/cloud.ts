@@ -30,10 +30,12 @@ export class CloudError extends Error {
 }
 
 export interface CloudStore {
-  /** records/ 文件清单（file + etag，一页全量） */
+  /** records/ 文件清单（file + etag，全量，含分页拉取） */
   listRecords(): Promise<CloudFileMeta[]>;
   fetchFile(key: string): Promise<FetchedFile>;
   putFileText(key: string, body: string, ifMatch?: string): Promise<PutResult>;
+  /** 物理删除云端对象；对象本就不存在视为成功（删除幂等） */
+  deleteFile(key: string): Promise<void>;
   /** 连通性/凭据校验（设置页「测试并保存」用），失败抛 CloudError */
   verify(): Promise<void>;
 }

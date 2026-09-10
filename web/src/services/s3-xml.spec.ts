@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
-import { inferS3Region, parseListObjectsXml } from './s3-xml';
+import { inferS3Region, parseListObjectsPage, parseListObjectsXml } from './s3-xml';
 
 const LIST_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
@@ -36,6 +36,29 @@ describe('parseListObjectsXml', () => {
 
   it('坏 XML 抛可读错误', () => {
     expect(() => parseListObjectsXml('not xml <<<')).toThrow('XML 解析失败');
+  });
+});
+
+describe('parseListObjectsPage', () => {
+  it('截断页携带 NextContinuationToken（分页拉全量依赖）', () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+  <IsTruncated>true</IsTruncated>
+  <NextContinuationToken>1ueGcxLPRx1Tr/XYExHnhbYLgveDs2J/wm36Hy4vbOwM=</NextContinuationToken>
+  <Contents>
+    <Key>records/a.json</Key>
+    <ETag>&quot;aaa&quot;</ETag>
+  </Contents>
+</ListBucketResult>`;
+    const page = parseListObjectsPage(xml);
+    expect(page.files).toEqual([{ file: 'records/a.json', etag: 'aaa' }]);
+    expect(page.nextToken).toBe('1ueGcxLPRx1Tr/XYExHnhbYLgveDs2J/wm36Hy4vbOwM=');
+  });
+
+  it('末页无 NextContinuationToken → nextToken 为空（循环终止）', () => {
+    const page = parseListObjectsPage(LIST_XML);
+    expect(page.files).toHaveLength(2);
+    expect(page.nextToken).toBeUndefined();
   });
 });
 

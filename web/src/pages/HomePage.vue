@@ -53,6 +53,22 @@ async function onIndicatorClick(): Promise<void> {
 /* 疑似重复提示条：存在则显示，可关闭（下次进入页面再现） */
 const { groups: duplicateGroups } = useDuplicateGroups();
 const hintDismissed = ref(false);
+
+/* 下拉刷新：立即同步一轮，云端变化（新增/修改/删除）即时反映到列表 */
+const refreshing = ref(false);
+
+async function onRefresh(): Promise<void> {
+  try {
+    const summary = await syncNow();
+    if (summary && summary.pushed + summary.pulled > 0) {
+      showToast(summary.conflicts > 0 ? `有 ${summary.conflicts} 条冲突待处理` : '已同步 ✅');
+    }
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : '同步失败');
+  } finally {
+    refreshing.value = false;
+  }
+}
 </script>
 
 <template>
@@ -69,38 +85,40 @@ const hintDismissed = ref(false);
     </header>
 
     <main class="page">
-      <div
-        v-if="duplicateGroups.length && !hintDismissed"
-        class="dup-hint card"
-        @click="router.push('/conflicts')"
-      >
-        <span>🔁 有 {{ duplicateGroups.length }} 场可能是同一场记了两次，去看看 ›</span>
-        <span class="hint-close" @click.stop="hintDismissed = true">✕</span>
-      </div>
-
-      <!-- 列表加载骨架屏 -->
-      <template v-if="isLoading">
-        <div v-for="n in 3" :key="n" class="skeleton card">
-          <van-skeleton :row="2" round />
+      <van-pull-refresh v-model="refreshing" @refresh="onRefresh">
+        <div
+          v-if="duplicateGroups.length && !hintDismissed"
+          class="dup-hint card"
+          @click="router.push('/conflicts')"
+        >
+          <span>🔁 有 {{ duplicateGroups.length }} 场可能是同一场记了两次，去看看 ›</span>
+          <span class="hint-close" @click.stop="hintDismissed = true">✕</span>
         </div>
-      </template>
 
-      <template v-else>
-        <RecordCard
-          v-for="record in visible"
-          :key="record.id"
-          :record="record"
-          :viewing-rank="viewingRanks.get(record.id)"
-          @click="router.push(`/record/${record.id}`)"
-        />
-        <EmptyState
-          v-if="!visible.length"
-          title="还没有家庭观影记录"
-          subtitle="记下第一部电影吧"
-          action-text="＋ 记一场"
-          @action="router.push('/record/new')"
-        />
-      </template>
+        <!-- 列表加载骨架屏 -->
+        <template v-if="isLoading">
+          <div v-for="n in 3" :key="n" class="skeleton card">
+            <van-skeleton :row="2" round />
+          </div>
+        </template>
+
+        <template v-else>
+          <RecordCard
+            v-for="record in visible"
+            :key="record.id"
+            :record="record"
+            :viewing-rank="viewingRanks.get(record.id)"
+            @click="router.push(`/record/${record.id}`)"
+          />
+          <EmptyState
+            v-if="!visible.length"
+            title="还没有家庭观影记录"
+            subtitle="记下第一部电影吧"
+            action-text="＋ 记一场"
+            @action="router.push('/record/new')"
+          />
+        </template>
+      </van-pull-refresh>
     </main>
   </div>
 </template>
