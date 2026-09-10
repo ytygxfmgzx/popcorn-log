@@ -14,7 +14,7 @@
     "test": "pnpm --filter web test",
     "lint": "eslint .",
     "typecheck": "pnpm -r typecheck",
-    "deploy:worker": "pnpm --filter worker deploy"
+    "deploy:worker": "pnpm -C worker exec wrangler deploy"
   },
   "devDependencies": {
     "@vue/eslint-config-typescript": "^14.0.0",
