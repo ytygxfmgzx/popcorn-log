@@ -5,6 +5,7 @@ import RecordDetailPage from '@/pages/RecordDetailPage.vue';
 import SettingsPage from '@/pages/SettingsPage.vue';
 import ConflictsPage from '@/pages/ConflictsPage.vue';
 import StatsPage from '@/pages/StatsPage.vue';
+import StatsListPage from '@/pages/StatsListPage.vue';
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -26,6 +27,7 @@ const router = createRouter({
     { path: '/settings', name: 'settings', component: SettingsPage, meta: { tabbar: 'settings' } },
     { path: '/conflicts', name: 'conflicts', component: ConflictsPage },
     { path: '/stats', name: 'stats', component: StatsPage, meta: { tabbar: 'stats' } },
+    { path: '/stats/list', name: 'stats-list', component: StatsListPage },
     { path: '/watchlist', redirect: '/' }, // Enhance 阶段：想看清单
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],

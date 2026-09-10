@@ -68,6 +68,7 @@ const locationLabel = computed(() => {
   border-radius: var(--r-card);
   box-shadow: var(--shadow-card);
   padding: 12px;
+  margin-bottom: 12px;
   cursor: pointer;
 }
 

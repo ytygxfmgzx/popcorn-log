@@ -91,6 +91,13 @@ const lastSyncedLabel = computed(() => {
   return `${date.getMonth() + 1}月${date.getDate()}日 ${hh}:${mm}`;
 });
 
+/** 切即存：点模式按钮立即持久化 mode，界面所示即引擎所用 */
+async function switchMode(mode: SyncMode): Promise<void> {
+  if (syncMode.value === mode) return;
+  syncMode.value = mode;
+  await saveCredentials({ mode });
+}
+
 async function testAndSaveCredentials(): Promise<void> {
   if (syncMode.value === 'worker') {
     if (!syncPasswordInput.value) {
@@ -170,6 +177,9 @@ async function removeMember(name: string): Promise<void> {
 }
 
 /* ---- 自定义地点 ---- */
+const showAddLocation = ref(false);
+const newLocation = ref('');
+
 async function removeLocation(name: string): Promise<void> {
   await showConfirmDialog({
     title: `删除地点「${name}」？`,
@@ -180,6 +190,16 @@ async function removeLocation(name: string): Promise<void> {
   await save({
     customLocations: settings.value.customLocations.filter((location) => location !== name),
   });
+}
+
+async function addLocation(): Promise<void> {
+  const name = newLocation.value.trim();
+  if (!name) return;
+  if (!settings.value.customLocations.includes(name)) {
+    await save({ customLocations: [...settings.value.customLocations, name] });
+  }
+  newLocation.value = '';
+  showAddLocation.value = false;
 }
 
 /* ---- 备份导出 ---- */
@@ -205,26 +225,34 @@ async function exportBackup(): Promise<void> {
     <main class="page">
       <!-- 一起看（成员） -->
       <h2 class="group-title">一起看</h2>
-      <div class="card group">
-        <div v-for="member in settings.members" :key="member" class="line-row">
-          <span>👨‍👩‍👧 {{ member }}</span>
-          <button class="row-remove" @click="removeMember(member)">移除</button>
-        </div>
-        <button class="row-add" @click="showAddMember = true">＋ 添加成员</button>
+      <div class="card group chip-wrap">
+        <span
+          v-for="member in settings.members"
+          :key="member"
+          class="chip-btn"
+          @click="removeMember(member)"
+        >
+          {{ member }}<em class="chip-del">✕</em>
+        </span>
+        <span class="chip-btn add" @click="showAddMember = true">＋</span>
       </div>
 
       <!-- 在哪看（地点） -->
       <h2 class="group-title">在哪看</h2>
-      <div class="card group">
-        <div v-for="location in PRESET_LOCATIONS" :key="location" class="line-row">
-          <span>{{ location }}</span>
-          <span class="preset-tag">预设</span>
-        </div>
-        <div v-for="location in settings.customLocations" :key="location" class="line-row">
-          <span>{{ location }}</span>
-          <button class="row-remove" @click="removeLocation(location)">删除</button>
-        </div>
-        <p class="group-hint">新地点可在录入页随手添加，会自动出现在这里。</p>
+      <div class="card group chip-wrap">
+        <span v-for="location in PRESET_LOCATIONS" :key="location" class="chip-btn preset">
+          {{ location }}<em class="chip-tag">预设</em>
+        </span>
+        <span
+          v-for="location in settings.customLocations"
+          :key="location"
+          class="chip-btn"
+          @click="removeLocation(location)"
+        >
+          {{ location }}<em class="chip-del">✕</em>
+        </span>
+        <span class="chip-btn add" @click="showAddLocation = true">＋</span>
+        <p class="group-hint chip-hint">点 ✕ 删除；也可在录入页随手添加，自动同步到这里。</p>
       </div>
 
       <!-- 这里管影片资源（TMDB 代理 Worker） -->
@@ -259,13 +287,13 @@ async function exportBackup(): Promise<void> {
           <span
             class="mode-btn"
             :class="{ on: syncMode === 'worker' }"
-            @click="syncMode = 'worker'"
-          >默认 · Worker</span>
+            @click="switchMode('worker')"
+          >默认 · CF Worker<em v-if="syncMode === 'worker'"> ✓</em></span>
           <span
             class="mode-btn"
             :class="{ on: syncMode === 'direct' }"
-            @click="syncMode = 'direct'"
-          >高级 · 直连 S3</span>
+            @click="switchMode('direct')"
+          >高级 · 直连 S3<em v-if="syncMode === 'direct'"> ✓</em></span>
         </div>
 
         <template v-if="syncMode === 'worker'">
@@ -299,12 +327,14 @@ async function exportBackup(): Promise<void> {
           </p>
         </template>
 
-        <button class="row-add" :loading="testingCreds" @click="testAndSaveCredentials">
-          🔑 测试并保存
-        </button>
-        <button class="row-add" :loading="syncing" @click="syncImmediately">
-          ⇅ 立即同步
-        </button>
+        <div class="btn-row">
+          <button class="btn-plain" :loading="testingCreds" @click="testAndSaveCredentials">
+            🔑 测试并保存
+          </button>
+          <button class="btn-primary" :loading="syncing" @click="syncImmediately">
+            ⇅ 立即同步
+          </button>
+        </div>
         <p
           class="group-hint"
           :class="{ 'status-link': hasPendingWork }"
@@ -349,6 +379,27 @@ async function exportBackup(): Promise<void> {
           @keyup.enter="addMember"
         />
         <van-button block round type="primary" class="sheet-btn" @click="addMember">
+          添加
+        </van-button>
+      </div>
+    </van-popup>
+
+    <!-- 添加地点弹层 -->
+    <van-popup
+      v-model:show="showAddLocation"
+      position="bottom"
+      round
+      :style="{ maxWidth: '480px', left: '50%', transform: 'translateX(-50%)' }"
+    >
+      <div class="sheet">
+        <h3>添加地点</h3>
+        <van-field
+          v-model="newLocation"
+          placeholder="如：外婆家"
+          maxlength="12"
+          @keyup.enter="addLocation"
+        />
+        <van-button block round type="primary" class="sheet-btn" @click="addLocation">
           添加
         </van-button>
       </div>
@@ -477,6 +528,79 @@ async function exportBackup(): Promise<void> {
   background: var(--c-primary-weak);
   color: var(--c-primary-active);
   font-weight: 600;
+}
+
+.mode-btn em {
+  font-style: normal;
+}
+
+/* chips 流式布局（成员 / 地点管理） */
+.chip-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 16px;
+}
+
+.chip-wrap .chip-btn {
+  cursor: pointer;
+}
+
+.chip-wrap .chip-btn.preset {
+  cursor: default;
+}
+
+.chip-del {
+  font-style: normal;
+  font-size: 10px;
+  color: var(--c-text-3);
+  margin-left: 5px;
+}
+
+.chip-tag {
+  font-style: normal;
+  font-size: 10px;
+  color: var(--c-text-3);
+  margin-left: 5px;
+}
+
+.chip-hint {
+  width: 100%;
+  padding: 2px 0 0;
+  margin: 0;
+}
+
+/* 云同步按钮行 */
+.btn-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 2px 16px 12px;
+}
+
+.btn-plain,
+.btn-primary {
+  border-radius: var(--r-btn);
+  padding: 10px 0;
+  font-family: inherit;
+  font-size: var(--t-14);
+  cursor: pointer;
+}
+
+.btn-plain {
+  border: 1px solid var(--c-primary);
+  background: var(--c-card);
+  color: var(--c-primary-active);
+}
+
+.btn-primary {
+  border: none;
+  background: var(--c-primary);
+  color: #fff;
+}
+
+.btn-primary:active {
+  background: var(--c-primary-active);
 }
 
 .about {

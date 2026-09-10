@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, defineComponent, h, reactive, ref } from 'vue';
+import { useRouter } from 'vue-router';
 import { db } from '@/db/dexie';
 import { useLiveQuery } from '@/composables/useLiveQuery';
 import { useAppSettings } from '@/composables/useAppSettings';
@@ -17,6 +18,7 @@ const EmptyHint = defineComponent({
 });
 
 const { settings } = useAppSettings();
+const router = useRouter();
 const today = todayStr();
 
 const { data: records } = useLiveQuery(() => db.records.toArray(), []);
@@ -150,6 +152,19 @@ function barDistMax(list: { count: number }[]): number {
 function fmtDay(date: string): string {
   return formatDateFull(date).replace(/\s.*/, '');
 }
+
+/** 分布榜条目 → 明细列表（继承当前时间窗） */
+function openDetail(kind: 'member' | 'location' | 'genre', value: string): void {
+  const query: Record<string, string> = { range: filter.range };
+  if (kind === 'member') query.member = value;
+  if (kind === 'location') query.location = value;
+  if (kind === 'genre') query.genre = value;
+  if (filter.range === 'custom') {
+    query.start = filter.customStart ?? '';
+    query.end = filter.customEnd ?? '';
+  }
+  void router.push({ path: '/stats/list', query });
+}
 </script>
 
 <template>
@@ -265,14 +280,14 @@ function fmtDay(date: string): string {
           </div>
         </div>
 
-        <!-- 成员参与榜（点击反查） -->
+        <!-- 成员参与榜（点击看明细） -->
         <div v-if="stats.memberBoard.length" class="card block">
           <h3 class="block-title">一起看 · 参与榜</h3>
           <div
             v-for="item in stats.memberBoard"
             :key="item.name"
             class="hbar-row"
-            @click="toggleMember(item.name)"
+            @click="openDetail('member', item.name)"
           >
             <span class="hbar-name">{{ item.name }}</span>
             <div class="hbar-track">
@@ -281,38 +296,18 @@ function fmtDay(date: string): string {
                 :style="{ width: `${(item.count / barDistMax(stats.memberBoard)) * 100}%` }"
               ></div>
             </div>
-            <span class="hbar-count">{{ item.count }}</span>
+            <span class="hbar-count">{{ item.count }} ›</span>
           </div>
         </div>
 
-        <!-- 类型分布 -->
-        <div v-if="stats.genreDist.length" class="card block">
-          <h3 class="block-title">类型分布</h3>
-          <div
-            v-for="item in stats.genreDist"
-            :key="item.name"
-            class="hbar-row"
-            @click="toggleGenre(item.name)"
-          >
-            <span class="hbar-name">{{ item.name }}</span>
-            <div class="hbar-track">
-              <div
-                class="hbar-fill"
-                :style="{ width: `${(item.count / barDistMax(stats.genreDist)) * 100}%` }"
-              ></div>
-            </div>
-            <span class="hbar-count">{{ item.count }}</span>
-          </div>
-        </div>
-
-        <!-- 地点分布 -->
+        <!-- 地点分布（点击看明细） -->
         <div v-if="stats.locationDist.length" class="card block">
           <h3 class="block-title">在哪看 · 分布</h3>
           <div
             v-for="item in stats.locationDist"
             :key="item.name"
             class="hbar-row"
-            @click="toggleLocation(item.name)"
+            @click="openDetail('location', item.name)"
           >
             <span class="hbar-name">{{ item.name }}</span>
             <div class="hbar-track">
@@ -321,7 +316,29 @@ function fmtDay(date: string): string {
                 :style="{ width: `${(item.count / barDistMax(stats.locationDist)) * 100}%` }"
               ></div>
             </div>
-            <span class="hbar-count">{{ item.count }}</span>
+            <span class="hbar-count">{{ item.count }} ›</span>
+          </div>
+        </div>
+
+        <!-- 类型分布（点击看明细） -->
+        <div v-if="stats.genreDist.length" class="card block">
+          <h3 class="block-title">
+            类型分布 <i class="title-note">来自影片信息（TMDB）自动标记</i>
+          </h3>
+          <div
+            v-for="item in stats.genreDist"
+            :key="item.name"
+            class="hbar-row"
+            @click="openDetail('genre', item.name)"
+          >
+            <span class="hbar-name">{{ item.name }}</span>
+            <div class="hbar-track">
+              <div
+                class="hbar-fill"
+                :style="{ width: `${(item.count / barDistMax(stats.genreDist)) * 100}%` }"
+              ></div>
+            </div>
+            <span class="hbar-count">{{ item.count }} ›</span>
           </div>
         </div>
       </template>
@@ -481,6 +498,14 @@ function fmtDay(date: string): string {
   font-size: var(--t-14);
   font-weight: 600;
   margin-bottom: 12px;
+}
+
+.block-title .title-note {
+  font-style: normal;
+  font-weight: 400;
+  font-size: var(--t-12);
+  color: var(--c-text-3);
+  margin-left: 6px;
 }
 
 /* 月度柱状 */

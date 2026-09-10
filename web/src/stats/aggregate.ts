@@ -79,17 +79,15 @@ function inTimeWindow(record: WatchRecord, filter: StatsFilter, today: string): 
   return record.watchedDate >= rangeStartDate(filter.range, today);
 }
 
-/** 主入口：全量未筛记录 + movies 元数据 + 筛选条件 → 聚合结果 */
-export function computeStats(
+/** 按筛选条件过滤记录（明细列表页与 computeStats 共用；墓碑剔除） */
+export function filterRecords(
   records: WatchRecord[],
   movies: MovieMeta[],
   filter: StatsFilter,
-  allMembers: string[],
   today: string,
-): StatsResult {
+): WatchRecord[] {
   const genresByKey = new Map(movies.map((movie) => [movie.key, movie.genres]));
-
-  const filtered = records.filter((record) => {
+  return records.filter((record) => {
     if (record.deleted) return false;
     if (!inTimeWindow(record, filter, today)) return false;
     if (filter.members.length && !record.members.some((m) => filter.members.includes(m))) return false;
@@ -100,6 +98,17 @@ export function computeStats(
     }
     return true;
   });
+}
+
+/** 主入口：全量未筛记录 + movies 元数据 + 筛选条件 → 聚合结果 */
+export function computeStats(
+  records: WatchRecord[],
+  movies: MovieMeta[],
+  filter: StatsFilter,
+  allMembers: string[],
+  today: string,
+): StatsResult {
+  const filtered = filterRecords(records, movies, filter, today);
 
   const uniqueMovies = new Set(filtered.map((r) => `${r.mediaType}:${r.tmdbId}`)).size;
 
@@ -122,7 +131,9 @@ export function computeStats(
   const memberBoard = countBy(filtered.flatMap((r) => r.members));
   const locationDist = countBy(filtered.map((r) => r.location).filter(Boolean));
   const genreDist = countBy(
-    filtered.flatMap((r) => genresByKey.get(`${r.mediaType}:${r.tmdbId}`) ?? []),
+    filtered.flatMap(
+      (r) => movies.find((m) => m.key === `${r.mediaType}:${r.tmdbId}`)?.genres ?? [],
+    ),
   );
 
   return {
