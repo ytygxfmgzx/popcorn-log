@@ -19,8 +19,12 @@ export interface Env {
 const TMDB_API_BASE = 'https://api.themoviedb.org/3/';
 const TMDB_IMAGE_BASE = 'https://image.tmdb.org/';
 
-/** 同步允许读写的对象 key（一事件一文件 + 共享配置），其余一律 403 */
-const SYNC_KEY_PATTERNS = [/^records\/[A-Za-z0-9_-]+\.json$/, /^config\.json$/];
+/** 同步允许读写的对象 key（一事件一文件 + 共享配置），其余一律 403。
+ *  结构校验而非字符集枚举：records/ 前缀 + .json 后缀 + 禁路径穿越，杜绝"漏字符"类边界 bug。 */
+function isAllowedKey(key: string): boolean {
+  if (key === 'config.json') return true;
+  return key.startsWith('records/') && key.endsWith('.json') && !key.includes('..') && key.length > 'records/.json'.length;
+}
 
 /** 转发到上游时允许透传的请求头（最小集合） */
 const FORWARD_REQUEST_HEADERS = ['accept'];
@@ -74,10 +78,6 @@ function checkSyncAuth(request: Request, env: Env): Response | null {
   return null;
 }
 
-function isAllowedKey(key: string): boolean {
-  return SYNC_KEY_PATTERNS.some((pattern) => pattern.test(key));
-}
-
 /** /sync/* 云同步存储 API（R2 绑定） */
 async function handleSync(request: Request, env: Env, url: URL): Promise<Response> {
   const authError = checkSyncAuth(request, env);
@@ -111,8 +111,7 @@ async function handleSync(request: Request, env: Env, url: URL): Promise<Respons
 
   // 上传（可选乐观锁：ifMatch 与云端 etag 不符 → 412，对应前端冲突协议）
   if (request.method === 'PUT' && action === '/sync/file') {
-    if (!isAllowedKey(key)) return errorResponse('不支持的 key', 403);
-    const body = await request.text();
+    if (!isAllowedKey(key)) return errorResponse('不支持的 key', 403);    const body = await request.text();
     const ifMatch = url.searchParams.get('ifMatch') ?? undefined;
     const options: R2PutOptions = {};
     if (ifMatch) options.onlyIf = { etagMatches: ifMatch };
