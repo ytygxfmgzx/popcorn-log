@@ -72,17 +72,30 @@ export function softMerge(local: WatchRecord, remote: WatchRecord): WatchRecord 
   };
 }
 
-/** config 并集：保留本地顺序，云端新增的追加到末尾 */
-export function mergeConfig(local: CloudConfig, remote: CloudConfig): CloudConfig {
-  function union(localList: string[], remoteList: string[]): string[] {
-    const result = [...localList];
+/**
+ * config 三向合并（base = 上次同步快照，缺省视为空 = 首次同步退化为并集）：
+ * (local ∩ remote) ∪ (local \ base) ∪ (remote \ base)——
+ * 基准内条目任一方删除即跟随删除（删除可跨设备传播），基准外条目任一方新增即保留。
+ * 顺序：本地顺序在前，云端新增追加到末尾。
+ */
+export function mergeConfig(
+  local: CloudConfig,
+  remote: CloudConfig,
+  base: CloudConfig = { members: [], customLocations: [] },
+): CloudConfig {
+  function merge(localList: string[], remoteList: string[], baseList: string[]): string[] {
+    const baseSet = new Set(baseList);
+    // 两边都在的保留；基准外（新增）的任一边有即保留；基准内单边删除的剔除
+    const keep = (item: string) =>
+      (localList.includes(item) && remoteList.includes(item)) || !baseSet.has(item);
+    const result = localList.filter(keep);
     for (const item of remoteList) {
-      if (!result.includes(item)) result.push(item);
+      if (keep(item) && !result.includes(item)) result.push(item);
     }
     return result;
   }
   return {
-    members: union(local.members, remote.members),
-    customLocations: union(local.customLocations, remote.customLocations),
+    members: merge(local.members, remote.members, base.members),
+    customLocations: merge(local.customLocations, remote.customLocations, base.customLocations),
   };
 }

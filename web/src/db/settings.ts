@@ -1,9 +1,9 @@
 import { db } from '@/db/dexie';
-import type { AppSettings } from '@/types';
+import { PRESET_LOCATIONS, type AppSettings } from '@/types';
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   members: ['爸爸', '妈妈'],
-  customLocations: [],
+  customLocations: [...PRESET_LOCATIONS],
 };
 
 export async function getAppSettings(): Promise<AppSettings> {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeStats, rangeStartDate } from './aggregate';
+import { computeStats, filterRecords, rangeStartDate } from './aggregate';
 import type { MovieMeta, WatchRecord } from '@/types';
 
 const TODAY = '2026-09-09'; // 周三
@@ -55,8 +55,13 @@ describe('computeStats', () => {
     record('d', { watchedDate: '2025-01-01', tmdbId: 3, deleted: true }), // 墓碑不计
   ];
   const movies = [
-    meta('movie:1', { runtime: 100, genres: ['动画', '奇幻'] }),
-    meta('movie:2', { runtime: 120, genres: ['纪录片'] }),
+    meta('movie:1', {
+      runtime: 100,
+      genres: ['动画', '奇幻'],
+      cast: ['声优A', '声优B'],
+      director: '导演X',
+    }),
+    meta('movie:2', { runtime: 120, genres: ['纪录片'], cast: ['声优A'], director: '导演Y' }),
     // movie:3 无元数据
   ];
 
@@ -73,9 +78,22 @@ describe('computeStats', () => {
     expect(stats.familyCount).toBe(1); // 只有 a
   });
 
-  it('成员筛选：任一命中', () => {
+  it('成员筛选（单选）：命中即在', () => {
     const stats = computeStats(records, movies, { ...noFilter, members: ['妹妹'] }, [], TODAY);
     expect(stats.viewings).toBe(2); // a、b
+  });
+
+  it('成员筛选（多选 AND）：所选成员须全部在场', () => {
+    const stats = computeStats(
+      records,
+      movies,
+      { ...noFilter, members: ['妹妹', '爸爸'] },
+      [],
+      TODAY,
+    );
+    expect(stats.viewings).toBe(1); // 只有 a 两人都在
+    const statsSolo = computeStats(records, movies, { ...noFilter, members: ['爸爸'] }, [], TODAY);
+    expect(statsSolo.viewings).toBe(2); // a、c（c 默认成员即爸爸）；b 只有妹妹
   });
 
   it('类型筛选（多选 OR）：动画+纪录片', () => {
@@ -126,18 +144,100 @@ describe('computeStats', () => {
     expect(stats.viewings).toBe(2); // a + c
   });
 
-  it('月度趋势 12 桶含空月，当月在前 11 位之后', () => {
+  it('月粒度趋势：12 桶含空月；时间窗只定粒度不裁剪数据（8 月记录仍在）', () => {
+    const stats = computeStats(records, movies, { range: 'month', members: [], locations: [], genres: [] }, [], TODAY);
+    expect(stats.trend.granularity).toBe('month');
+    expect(stats.trend.buckets).toHaveLength(12);
+    expect(stats.trend.buckets[11]).toEqual({ key: '2026-09', label: '9月', count: 2 });
+    expect(stats.trend.buckets[10]).toEqual({ key: '2026-08', label: '8月', count: 1 });
+    expect(stats.trend.buckets[0].key).toBe('2025-10');
+  });
+
+  it('条件筛选影响趋势：只看妹妹参与的场次', () => {
+    const stats = computeStats(records, movies, { range: 'month', members: ['妹妹'], locations: [], genres: [] }, [], TODAY);
+    expect(stats.trend.buckets[11].count).toBe(2); // a、b
+    expect(stats.trend.buckets[10].count).toBe(0); // c（妹妹不在场）被条件筛掉
+  });
+
+  it('年粒度趋势：全部时间 → 从最早有数据年份到今年', () => {
     const stats = computeStats(records, movies, noFilter, [], TODAY);
-    expect(stats.monthly).toHaveLength(12);
-    expect(stats.monthly[11]).toEqual({ name: '2026-09', count: 2 });
-    expect(stats.monthly[10]).toEqual({ name: '2026-08', count: 1 });
-    expect(stats.monthly[0].name).toBe('2025-10');
+    expect(stats.trend.granularity).toBe('year');
+    expect(stats.trend.buckets).toEqual([{ key: '2026', label: '2026', count: 3 }]);
+  });
+
+  it('年粒度趋势：最早数据超过 11 年前 → 最多 12 桶', () => {
+    const oldRecords = [...records, record('old', { watchedDate: '2013-01-01' })];
+    const stats = computeStats(oldRecords, movies, noFilter, [], TODAY);
+    expect(stats.trend.granularity).toBe('year');
+    expect(stats.trend.buckets).toHaveLength(12);
+    expect(stats.trend.buckets[0].key).toBe('2015'); // 2026-11
+    expect(stats.trend.buckets[11].key).toBe('2026');
+  });
+
+  it('周粒度趋势：近 12 周（含本周），按周一归桶', () => {
+    const stats = computeStats(records, movies, { range: 'week', members: [], locations: [], genres: [] }, [], TODAY);
+    expect(stats.trend.granularity).toBe('week');
+    expect(stats.trend.buckets).toHaveLength(12);
+    expect(stats.trend.buckets[0].key).toBe('2026-06-22');
+    expect(stats.trend.buckets[10]).toEqual({ key: '2026-08-31', label: '8/31', count: 2 }); // a、b
+    expect(stats.trend.buckets[9]).toEqual({ key: '2026-08-24', label: '8/24', count: 0 });
+    expect(stats.trend.buckets[11]).toEqual({ key: '2026-09-07', label: '9/7', count: 0 });
+  });
+
+  it('自定义短跨度 → 周粒度，从起点所在周到终点', () => {
+    const stats = computeStats(
+      records,
+      movies,
+      { range: 'custom', members: [], locations: [], genres: [], customStart: '2026-08-15', customEnd: '2026-09-01' },
+      [],
+      TODAY,
+    );
+    expect(stats.trend.granularity).toBe('week');
+    expect(stats.trend.buckets.map((b) => b.key)).toEqual([
+      '2026-08-10',
+      '2026-08-17',
+      '2026-08-24',
+      '2026-08-31',
+    ]);
+    expect(stats.trend.buckets[0].count).toBe(1); // c 08-15
+    expect(stats.trend.buckets[3].count).toBe(2); // a 09-01、b 09-02（趋势不被时间窗裁剪）
   });
 
   it('分布按次数降序', () => {
     const stats = computeStats(records, movies, noFilter, [], TODAY);
     expect(stats.locationDist[0]).toEqual({ name: '家里', count: 2 });
     expect(stats.genreDist[0]).toEqual({ name: '动画', count: 2 });
+  });
+
+  it('演员榜：去重影片数（重刷不重复计），降序', () => {
+    const stats = computeStats(records, movies, noFilter, [], TODAY);
+    expect(stats.castBoard[0]).toEqual({ name: '声优A', count: 2 }); // movie:1 + movie:2
+    expect(stats.castBoard[1]).toEqual({ name: '声优B', count: 1 }); // movie:1（b 重刷不重复计）
+  });
+
+  it('导演榜：去重影片数', () => {
+    const stats = computeStats(records, movies, noFilter, [], TODAY);
+    expect(stats.directorBoard).toEqual([
+      { name: '导演X', count: 1 },
+      { name: '导演Y', count: 1 },
+    ]); // 同数按名字排序
+  });
+
+  it('演员/导演反查：filterRecords person 命中该人参演的影片场次', () => {
+    const castHit = filterRecords(
+      records,
+      movies,
+      { ...noFilter, person: { name: '声优B', type: 'cast' } },
+      TODAY,
+    );
+    expect(castHit.map((r) => r.id)).toEqual(['a', 'b']); // movie:1 的两场
+    const directorHit = filterRecords(
+      records,
+      movies,
+      { ...noFilter, person: { name: '导演Y', type: 'director' } },
+      TODAY,
+    );
+    expect(directorHit.map((r) => r.id)).toEqual(['c']);
   });
 
   it('无评分记录 avgRating 为 null', () => {

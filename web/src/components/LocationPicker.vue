@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { useAppSettings } from '@/composables/useAppSettings';
-import { PRESET_LOCATIONS, LOCATION_EMOJI } from '@/types';
+import { LOCATION_EMOJI } from '@/types';
 
-/** 地点三点选（家里默认 / 旅行途中 / 影院）+ 自定义添加（进入常用列表） */
+/** 地点选择（含初始预置，均存 AppSettings.customLocations，可增可删）+ 自定义添加 */
 defineProps<{
   modelValue: string;
 }>();
@@ -14,7 +14,7 @@ const emit = defineEmits<{
 
 const { settings, save } = useAppSettings();
 
-const options = computed(() => [...PRESET_LOCATIONS, ...settings.value.customLocations]);
+const options = computed(() => settings.value.customLocations);
 
 const showAdd = ref(false);
 const newLocation = ref('');

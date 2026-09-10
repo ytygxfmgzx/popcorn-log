@@ -178,19 +178,21 @@ async function pushPhase(store: CloudStore, summary: SyncSummary): Promise<void>
 }
 
 /**
- * config.json 对账（members + customLocations，并集合并）：
- * 云端有本地没有的条目 → 写本地（liveQuery 自动刷 UI）；
- * 本地相对上次快照有变化、或云端有更新 → 整文件上传（If-Match），412 重拉并集重试一次。
+ * config.json 对账（members + customLocations，三向合并，删除可传播）：
+ * 以 configSyncedSnapshot 为基准合并本地与云端——单边删除跟随删除、单边新增保留（无快照=首次，退化为并集）；
+ * 合并结果与本地不一致 → 写本地（liveQuery 自动刷 UI）；
+ * 本地有变化、或合并结果与云端不同 → 整文件上传（If-Match），412 重拉以同一基准再合并重试一次。
  */
 async function configPhase(store: CloudStore): Promise<void> {
   const app = await getAppSettings();
   const local: CloudConfig = { members: app.members, customLocations: app.customLocations };
+  const base: CloudConfig = app.configSyncedSnapshot ?? EMPTY_CONFIG;
   const fetched = await store.fetchFile('config.json');
   const remote: CloudConfig | null = fetched.text
     ? normalizeRemoteConfig(safeJsonParse(fetched.text))
     : null;
 
-  const merged = mergeConfig(local, remote ?? { members: [], customLocations: [] });
+  const merged = mergeConfig(local, remote ?? EMPTY_CONFIG, base);
   const remoteHasNew = !configEquals(merged, local);
   if (remoteHasNew) {
     await saveAppSettings({ members: merged.members, customLocations: merged.customLocations });
@@ -212,25 +214,31 @@ async function configPhase(store: CloudStore): Promise<void> {
   // 云端已有文件 → If-Match；新建 → 无锁创建
   const ifMatch = remoteExists ? (fetched.etag ?? app.configEtag) : undefined;
   let result = await store.putFileText('config.json', JSON.stringify(finalConfig), ifMatch);
+  let uploaded = finalConfig;
+  let uploadedEtag = fetched.etag;
   if (result.conflict) {
-    // 对方刚改过：重拉 → 再并集 → 带新 etag 重试一次
+    // 对方刚改过：重拉 → 以同一基准再合并 → 带新 etag 重试一次
     const fresh = await store.fetchFile('config.json');
     const freshRemote = fresh.text ? normalizeRemoteConfig(safeJsonParse(fresh.text)) : null;
-    const retry = mergeConfig(finalConfig, freshRemote ?? { members: [], customLocations: [] });
+    const retry = mergeConfig(finalConfig, freshRemote ?? EMPTY_CONFIG, base);
     await saveAppSettings({
       members: retry.members,
       customLocations: retry.customLocations,
     });
+    uploaded = retry;
+    uploadedEtag = fresh.etag;
     result = await store.putFileText('config.json', JSON.stringify(retry), fresh.etag);
-    if (result.conflict) return; // 再冲突就留给下一轮（数据无损）
   }
   if (result.ok) {
     await saveAppSettings({
-      configEtag: result.etag ?? fetched.etag,
-      configSyncedSnapshot: remoteHasNew ? merged : local,
+      configEtag: result.etag ?? uploadedEtag,
+      configSyncedSnapshot: uploaded,
     });
   }
+  // 再冲突就留给下一轮（数据无损）
 }
+
+const EMPTY_CONFIG: CloudConfig = { members: [], customLocations: [] };
 
 function configEquals(a: CloudConfig, b: CloudConfig): boolean {
   return (

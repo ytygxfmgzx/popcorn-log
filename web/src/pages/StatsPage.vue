@@ -6,7 +6,7 @@ import { useLiveQuery } from '@/composables/useLiveQuery';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { computeStats, type StatsRange } from '@/stats/aggregate';
 import { todayStr, formatDateFull } from '@/utils/date';
-import { PRESET_LOCATIONS } from '@/types';
+import { LOCATION_EMOJI } from '@/types';
 
 /** 无记录空态（局部小组件，避免占用 components 目录） */
 const EmptyHint = defineComponent({
@@ -43,7 +43,7 @@ const RANGE_OPTIONS: { value: StatsRange; label: string }[] = [
   { value: 'custom', label: '自定义…' },
 ];
 
-const locationOptions = computed(() => [...PRESET_LOCATIONS, ...settings.value.customLocations]);
+const locationOptions = computed(() => settings.value.customLocations);
 const genreOptions = computed(() => {
   const set = new Set<string>();
   for (const movie of movies.value) movie.genres.forEach((genre) => set.add(genre));
@@ -138,15 +138,90 @@ const hoursLabel = computed(() => {
   return hours >= 100 ? String(Math.round(hours)) : hours.toFixed(1);
 });
 
-/* 月度柱状：高度百分比（max 归一） */
-const monthlyMax = computed(() => Math.max(...stats.value.monthly.map((m) => m.count), 1));
+/* ---------- 趋势折线（粒度随时间窗联动） ---------- */
+const TREND_W = 320;
+const TREND_H = 148;
+const TREND_PAD = { top: 20, right: 14, bottom: 24, left: 14 };
 
-function barHeight(count: number): string {
-  return `${Math.round((count / monthlyMax.value) * 100)}%`;
+const trendTitle = computed(() => {
+  const map: Record<string, string> = { week: '周趋势', month: '月度趋势', year: '年度趋势' };
+  return map[stats.value.trend.granularity] ?? '趋势';
+});
+
+const trendNote = computed(() => {
+  const map: Record<string, string> = { week: '近 12 周', month: '近 12 个月', year: '按年' };
+  return map[stats.value.trend.granularity] ?? '';
+});
+
+const trendTotal = computed(() =>
+  stats.value.trend.buckets.reduce((sum, bucket) => sum + bucket.count, 0),
+);
+
+const trendPoints = computed(() => {
+  const buckets = stats.value.trend.buckets;
+  const max = Math.max(...buckets.map((b) => b.count), 1);
+  const innerW = TREND_W - TREND_PAD.left - TREND_PAD.right;
+  const innerH = TREND_H - TREND_PAD.top - TREND_PAD.bottom;
+  const step = buckets.length > 1 ? innerW / (buckets.length - 1) : 0;
+  return buckets.map((bucket, index) => ({
+    ...bucket,
+    x: TREND_PAD.left + step * index,
+    y: TREND_PAD.top + innerH * (1 - bucket.count / max),
+  }));
+});
+
+const trendPolyline = computed(() =>
+  trendPoints.value.map((point) => `${point.x},${point.y}`).join(' '),
+);
+
+/* ---------- 在哪看 · 圆环 ---------- */
+const DONUT_COLORS = [
+  'var(--chart-1)',
+  'var(--chart-2)',
+  'var(--chart-3)',
+  'var(--chart-4)',
+  'var(--chart-5)',
+  'var(--chart-6)',
+  'var(--chart-7)',
+];
+
+const locationDonut = computed(() => {
+  const items = stats.value.locationDist;
+  const total = items.reduce((sum, item) => sum + item.count, 0);
+  let acc = 0;
+  const segments = items.map((item, index) => {
+    const start = total ? (acc / total) * 100 : 0;
+    acc += item.count;
+    const end = total ? (acc / total) * 100 : 0;
+    return { ...item, color: DONUT_COLORS[index % DONUT_COLORS.length], start, end };
+  });
+  return { segments, total };
+});
+
+const donutStyle = computed(() => {
+  const stops = locationDonut.value.segments
+    .map((s) => `${s.color} ${s.start}% ${s.end}%`)
+    .join(', ');
+  return { background: `conic-gradient(${stops || 'var(--c-bg) 0% 100%'})` };
+});
+
+/* ---------- 类型 · 热力胶囊 ---------- */
+const genreMax = computed(() => Math.max(...stats.value.genreDist.map((g) => g.count), 1));
+
+function heatLevel(count: number): string {
+  const ratio = count / genreMax.value;
+  return ratio > 0.66 ? 'heat-3' : ratio > 0.33 ? 'heat-2' : 'heat-1';
 }
 
-function barDistMax(list: { count: number }[]): number {
-  return Math.max(...list.map((item) => item.count), 1);
+/* ---------- 常看主创（去重影片数口径） ---------- */
+const CAST_TOP = 10;
+const DIRECTOR_TOP = 5;
+const castTop = computed(() => stats.value.castBoard.slice(0, CAST_TOP));
+const directorTop = computed(() => stats.value.directorBoard.slice(0, DIRECTOR_TOP));
+const MEDALS = ['🥇', '🥈', '🥉'];
+
+function rankBadge(index: number): string {
+  return MEDALS[index] ?? String(index + 1);
 }
 
 function fmtDay(date: string): string {
@@ -154,11 +229,18 @@ function fmtDay(date: string): string {
 }
 
 /** 分布榜条目 → 明细列表（继承当前时间窗） */
-function openDetail(kind: 'member' | 'location' | 'genre', value: string): void {
+function openDetail(
+  kind: 'member' | 'location' | 'genre' | 'cast' | 'director',
+  value: string,
+): void {
   const query: Record<string, string> = { range: filter.range };
   if (kind === 'member') query.member = value;
   if (kind === 'location') query.location = value;
   if (kind === 'genre') query.genre = value;
+  if (kind === 'cast' || kind === 'director') {
+    query.person = value;
+    query.personType = kind;
+  }
   if (filter.range === 'custom') {
     query.start = filter.customStart ?? '';
     query.end = filter.customEnd ?? '';
@@ -195,7 +277,7 @@ function openDetail(kind: 'member' | 'location' | 'genre', value: string): void 
           </van-dropdown-item>
           <van-dropdown-item ref="filterDrop" :title="filterTitle">
             <div class="drop-filter">
-              <p class="drop-label">一起看</p>
+              <p class="drop-label">一起看<em class="drop-note">选多个 = 都在场</em></p>
               <div class="chip-row">
                 <span
                   v-for="member in settings.members"
@@ -263,83 +345,138 @@ function openDetail(kind: 'member' | 'location' | 'genre', value: string): void 
           </div>
         </div>
 
-        <!-- 月度趋势 -->
-        <div v-if="stats.viewings" class="card block">
-          <h3 class="block-title">月度趋势</h3>
-          <div class="bars">
-            <div v-for="month in stats.monthly" :key="month.name" class="bar-col">
-              <div class="bar-track">
-                <div
-                  class="bar"
-                  :class="{ dim: month.count === 0 }"
-                  :style="{ height: barHeight(month.count) }"
-                ></div>
-              </div>
-              <span class="bar-label">{{ month.name.slice(5) }}</span>
-            </div>
-          </div>
+        <!-- 趋势（粒度随时间窗联动：周/月/年折线） -->
+        <div v-if="trendTotal" class="card block">
+          <h3 class="block-title">
+            {{ trendTitle }} <i class="title-note">{{ trendNote }}</i>
+          </h3>
+          <svg :viewBox="`0 0 ${TREND_W} ${TREND_H}`" class="trend-svg">
+            <polyline
+              :points="trendPolyline"
+              fill="none"
+              stroke="var(--c-primary)"
+              stroke-width="2"
+              stroke-linejoin="round"
+              stroke-linecap="round"
+            />
+            <template v-for="(point, index) in trendPoints" :key="point.key">
+              <circle
+                :cx="point.x"
+                :cy="point.y"
+                :r="point.count ? 3.2 : 2"
+                :fill="point.count ? 'var(--c-primary-active)' : 'var(--c-border)'"
+              />
+              <text
+                v-if="point.count"
+                :x="point.x"
+                :y="point.y - 8"
+                class="trend-num"
+              >
+                {{ point.count }}
+              </text>
+              <text
+                :x="point.x"
+                :y="TREND_H - 6"
+                class="trend-label"
+                :text-anchor="index === 0 ? 'start' : index === trendPoints.length - 1 ? 'end' : 'middle'"
+              >
+                {{ point.label }}
+              </text>
+            </template>
+          </svg>
         </div>
 
-        <!-- 成员参与榜（点击看明细） -->
+        <!-- 成员参与榜：胶囊按钮流（点击看明细） -->
         <div v-if="stats.memberBoard.length" class="card block">
           <h3 class="block-title">一起看 · 参与榜</h3>
-          <div
-            v-for="item in stats.memberBoard"
-            :key="item.name"
-            class="hbar-row"
-            @click="openDetail('member', item.name)"
-          >
-            <span class="hbar-name">{{ item.name }}</span>
-            <div class="hbar-track">
-              <div
-                class="hbar-fill"
-                :style="{ width: `${(item.count / barDistMax(stats.memberBoard)) * 100}%` }"
-              ></div>
-            </div>
-            <span class="hbar-count">{{ item.count }} ›</span>
+          <div class="pill-wrap">
+            <span
+              v-for="item in stats.memberBoard"
+              :key="item.name"
+              class="pill"
+              @click="openDetail('member', item.name)"
+            >
+              {{ item.name }}<em>×{{ item.count }}</em>
+            </span>
           </div>
         </div>
 
-        <!-- 地点分布（点击看明细） -->
+        <!-- 地点分布：圆环 + 图例（图例点击看明细） -->
         <div v-if="stats.locationDist.length" class="card block">
           <h3 class="block-title">在哪看 · 分布</h3>
-          <div
-            v-for="item in stats.locationDist"
-            :key="item.name"
-            class="hbar-row"
-            @click="openDetail('location', item.name)"
-          >
-            <span class="hbar-name">{{ item.name }}</span>
-            <div class="hbar-track">
-              <div
-                class="hbar-fill"
-                :style="{ width: `${(item.count / barDistMax(stats.locationDist)) * 100}%` }"
-              ></div>
+          <div class="donut-wrap">
+            <div class="donut" :style="donutStyle">
+              <div class="donut-hole">
+                <b>{{ locationDonut.total }}</b>
+                <i>场</i>
+              </div>
             </div>
-            <span class="hbar-count">{{ item.count }} ›</span>
+            <div class="donut-legend">
+              <div
+                v-for="segment in locationDonut.segments"
+                :key="segment.name"
+                class="legend-row"
+                @click="openDetail('location', segment.name)"
+              >
+                <span class="legend-dot" :style="{ background: segment.color }"></span>
+                <span class="legend-name">
+                  {{ LOCATION_EMOJI[segment.name] ?? '📍' }} {{ segment.name }}
+                </span>
+                <span class="legend-count">{{ segment.count }} ›</span>
+              </div>
+            </div>
           </div>
         </div>
 
-        <!-- 类型分布（点击看明细） -->
+        <!-- 类型分布：热力胶囊（浓度随次数，点击看明细） -->
         <div v-if="stats.genreDist.length" class="card block">
           <h3 class="block-title">
             类型分布 <i class="title-note">来自影片信息（TMDB）自动标记</i>
           </h3>
-          <div
-            v-for="item in stats.genreDist"
-            :key="item.name"
-            class="hbar-row"
-            @click="openDetail('genre', item.name)"
-          >
-            <span class="hbar-name">{{ item.name }}</span>
-            <div class="hbar-track">
-              <div
-                class="hbar-fill"
-                :style="{ width: `${(item.count / barDistMax(stats.genreDist)) * 100}%` }"
-              ></div>
-            </div>
-            <span class="hbar-count">{{ item.count }} ›</span>
+          <div class="heat-wrap">
+            <span
+              v-for="item in stats.genreDist"
+              :key="item.name"
+              class="heat-pill"
+              :class="heatLevel(item.count)"
+              @click="openDetail('genre', item.name)"
+            >
+              {{ item.name }}<em>{{ item.count }}</em>
+            </span>
           </div>
+        </div>
+
+        <!-- 常看主创：演员/导演 TOP（去重影片数，点击看明细） -->
+        <div v-if="castTop.length || directorTop.length" class="card block">
+          <h3 class="block-title">
+            常看主创 <i class="title-note">按看过的影片数</i>
+          </h3>
+          <template v-if="castTop.length">
+            <p class="rank-label">演员 TOP{{ CAST_TOP }}</p>
+            <div
+              v-for="(item, index) in castTop"
+              :key="`cast-${item.name}`"
+              class="rank-row"
+              @click="openDetail('cast', item.name)"
+            >
+              <span class="rank-badge">{{ rankBadge(index) }}</span>
+              <span class="rank-name">{{ item.name }}</span>
+              <span class="rank-count">{{ item.count }} 部 ›</span>
+            </div>
+          </template>
+          <template v-if="directorTop.length">
+            <p class="rank-label" :class="{ 'with-top': castTop.length }">导演 TOP{{ DIRECTOR_TOP }}</p>
+            <div
+              v-for="(item, index) in directorTop"
+              :key="`director-${item.name}`"
+              class="rank-row"
+              @click="openDetail('director', item.name)"
+            >
+              <span class="rank-badge">{{ rankBadge(index) }}</span>
+              <span class="rank-name">{{ item.name }}</span>
+              <span class="rank-count">{{ item.count }} 部 ›</span>
+            </div>
+          </template>
         </div>
       </template>
     </main>
@@ -439,6 +576,14 @@ function openDetail(kind: 'member' | 'location' | 'genre', value: string): void 
   margin-top: 0;
 }
 
+.drop-note {
+  font-style: normal;
+  font-size: 11px;
+  margin-left: 6px;
+  color: var(--c-text-3);
+  opacity: 0.85;
+}
+
 .chip-row {
   display: flex;
   gap: 8px;
@@ -508,84 +653,229 @@ function openDetail(kind: 'member' | 'location' | 'genre', value: string): void 
   margin-left: 6px;
 }
 
-/* 月度柱状 */
-.bars {
-  display: flex;
-  gap: 6px;
-  align-items: stretch;
+/* 趋势折线（SVG 等比缩放自适应容器宽） */
+.trend-svg {
+  display: block;
+  width: 100%;
+  height: auto;
 }
 
-.bar-col {
-  flex: 1;
+.trend-svg .trend-num {
+  font-size: 9px;
+  font-weight: 600;
+  fill: var(--c-primary-active);
+  text-anchor: middle;
+}
+
+.trend-svg .trend-label {
+  font-size: 9px;
+  fill: var(--c-text-3);
+}
+
+/* 参与榜 · 胶囊按钮流 */
+.pill-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 13px;
+  border-radius: 999px;
+  background: var(--c-primary-weak);
+  color: var(--c-primary-active);
+  font-size: var(--t-14);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pill em {
+  font-style: normal;
+  font-size: var(--t-12);
+  font-weight: 400;
+  color: var(--c-text-2);
+}
+
+.pill:active {
+  opacity: 0.75;
+}
+
+/* 地点分布 · 圆环 + 图例 */
+.donut-wrap {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.donut {
+  flex: none;
+  width: 104px;
+  height: 104px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.donut-hole {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--c-card);
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
 }
 
-.bar-track {
-  height: 96px;
-  display: flex;
-  align-items: flex-end;
+.donut-hole b {
+  font-size: var(--t-20);
+  font-weight: 700;
+  color: var(--c-text);
+  line-height: 1;
 }
 
-.bar {
-  width: 100%;
-  border-radius: 4px 4px 0 0;
-  background: var(--c-primary);
-  min-height: 2px;
-  transition: height 200ms ease-out;
-}
-
-.bar.dim {
-  background: var(--c-bg);
-  min-height: 2px;
-}
-
-.bar-label {
-  text-align: center;
-  font-size: 10px;
+.donut-hole i {
+  font-style: normal;
+  font-size: 11px;
   color: var(--c-text-3);
 }
 
-/* 横向条形 */
-.hbar-row {
+.donut-legend {
+  flex: 1;
+  min-width: 0;
+}
+
+.legend-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   padding: 6px 0;
   cursor: pointer;
 }
 
-.hbar-name {
+.legend-row:active {
+  opacity: 0.75;
+}
+
+.legend-dot {
   flex: none;
-  width: 64px;
-  font-size: var(--t-13);
-  color: var(--c-text-2);
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.legend-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--t-14);
+  color: var(--c-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.hbar-track {
-  flex: 1;
-  height: 10px;
-  background: var(--c-bg);
-  border-radius: 999px;
-  overflow: hidden;
-}
-
-.hbar-fill {
-  height: 100%;
-  border-radius: 999px;
-  background: linear-gradient(90deg, var(--c-primary), var(--c-primary-active));
-  transition: width 200ms ease-out;
-}
-
-.hbar-count {
+.legend-count {
   flex: none;
-  width: 28px;
-  text-align: right;
+  font-size: var(--t-12);
+  color: var(--c-text-3);
+}
+
+/* 类型分布 · 热力胶囊（浓度/字号随次数分档） */
+.heat-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.heat-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: transform 150ms ease-out;
+}
+
+.heat-pill:active {
+  transform: scale(0.94);
+}
+
+.heat-pill em {
+  font-style: normal;
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+.heat-pill.heat-1 {
+  background: var(--c-bg);
+  color: var(--c-text-2);
+  font-size: var(--t-12);
+}
+
+.heat-pill.heat-2 {
+  background: var(--c-primary-weak);
+  color: var(--c-primary-active);
+  font-size: var(--t-14);
+}
+
+.heat-pill.heat-3 {
+  background: var(--c-primary);
+  color: #fff;
+  font-size: var(--t-15);
+  font-weight: 600;
+}
+
+/* 常看主创 · 奖牌排行榜 */
+.rank-label {
+  font-size: var(--t-12);
+  color: var(--c-text-3);
+  margin: 4px 0 6px;
+}
+
+.rank-label.with-top {
+  margin-top: 14px;
+}
+
+.rank-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  cursor: pointer;
+}
+
+.rank-row:active {
+  opacity: 0.75;
+}
+
+.rank-badge {
+  flex: none;
+  width: 24px;
+  text-align: center;
+  font-size: var(--t-14);
+  font-weight: 700;
+  color: var(--c-text-3);
+}
+
+.rank-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--t-15);
+  color: var(--c-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rank-count {
+  flex: none;
   font-size: var(--t-12);
   color: var(--c-text-3);
 }

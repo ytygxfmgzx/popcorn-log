@@ -75,7 +75,7 @@ export interface SyncState {
 export interface AppSettings {
   /** 空 = 同源（开发经 vite proxy；生产填 workers.dev 域名） */
   workerUrl?: string;
-  /** 与云端 config.json 对账（并集合并），非本地独占 */
+  /** 与云端 config.json 对账（三向合并：单边删除跟随、单边新增保留），非本地独占 */
   members: string[];
   customLocations: string[];
   lastMembersCombo?: string[];
@@ -133,7 +133,7 @@ export interface WatchlistItem {
   removed: boolean;
 }
 
-/** 预设地点（不可删除），自定义地点存 AppSettings.customLocations */
+/** 初始默认地点（新装默认值与 v2 迁移源）；入库后即普通数据，可删可同步 */
 export const PRESET_LOCATIONS = ['家里', '旅行途中', '影院'] as const;
 
 export const LOCATION_EMOJI: Record<string, string> = {

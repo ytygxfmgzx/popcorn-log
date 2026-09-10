@@ -10,7 +10,7 @@ import { getAppSettings } from '@/db/settings';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { useDuplicateGroups, useSyncStatus } from '@/composables/useSyncStatus';
 import { syncNow } from '@/sync/schedule';
-import { PRESET_LOCATIONS, type SyncMode } from '@/types';
+import { LOCATION_EMOJI, type SyncMode } from '@/types';
 
 const router = useRouter();
 const { settings, save } = useAppSettings();
@@ -240,19 +240,18 @@ async function exportBackup(): Promise<void> {
       <!-- 在哪看（地点） -->
       <h2 class="group-title">在哪看</h2>
       <div class="card group chip-wrap">
-        <span v-for="location in PRESET_LOCATIONS" :key="location" class="chip-btn preset">
-          {{ location }}<em class="chip-tag">预设</em>
-        </span>
         <span
           v-for="location in settings.customLocations"
           :key="location"
           class="chip-btn"
           @click="removeLocation(location)"
         >
-          {{ location }}<em class="chip-del">✕</em>
+          {{ LOCATION_EMOJI[location] ?? '📍' }} {{ location }}<em class="chip-del">✕</em>
         </span>
         <span class="chip-btn add" @click="showAddLocation = true">＋</span>
-        <p class="group-hint chip-hint">点 ✕ 删除；也可在录入页随手添加，自动同步到这里。</p>
+        <p class="group-hint chip-hint">
+          点 ✕ 删除（含初始的家里/旅行途中/影院）；也可在录入页随手添加，变更自动同步。
+        </p>
       </div>
 
       <!-- 这里管影片资源（TMDB 代理 Worker） -->
@@ -546,18 +545,7 @@ async function exportBackup(): Promise<void> {
   cursor: pointer;
 }
 
-.chip-wrap .chip-btn.preset {
-  cursor: default;
-}
-
 .chip-del {
-  font-style: normal;
-  font-size: 10px;
-  color: var(--c-text-3);
-  margin-left: 5px;
-}
-
-.chip-tag {
   font-style: normal;
   font-size: 10px;
   color: var(--c-text-3);

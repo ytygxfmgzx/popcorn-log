@@ -89,7 +89,12 @@ describe('softMerge', () => {
 });
 
 describe('mergeConfig', () => {
-  it('并集：本地顺序在前，云端新增追加', () => {
+  const config = (members: string[], customLocations: string[] = []) => ({
+    members,
+    customLocations,
+  });
+
+  it('无基准（首次同步）：退化为并集，本地顺序在前，云端新增追加', () => {
     const merged = mergeConfig(
       { members: ['爸爸', '妈妈'], customLocations: ['外婆家'] },
       { members: ['妈妈', '爷爷'], customLocations: ['外婆家', '露营'] },
@@ -98,5 +103,51 @@ describe('mergeConfig', () => {
       members: ['爸爸', '妈妈', '爷爷'],
       customLocations: ['外婆家', '露营'],
     });
+  });
+
+  it('本地删除 → 合并结果跟随删除（删除可上传传播）', () => {
+    const base = config(['爸爸', '妈妈']);
+    expect(mergeConfig(config(['爸爸']), config(['爸爸', '妈妈']), base)).toEqual(config(['爸爸']));
+  });
+
+  it('本地未动、云端删除 → 跟随删除（拉取时写回本地）', () => {
+    const base = config(['爸爸', '妈妈']);
+    expect(mergeConfig(config(['爸爸', '妈妈']), config(['爸爸']), base)).toEqual(config(['爸爸']));
+  });
+
+  it('两边都删 → 删', () => {
+    const base = config(['爸爸', '妈妈']);
+    expect(mergeConfig(config(['爸爸']), config(['爸爸']), base)).toEqual(config(['爸爸']));
+  });
+
+  it('并发共存：本地新增 + 云端删除互不吞没', () => {
+    const base = config(['爸爸', '妈妈']);
+    const merged = mergeConfig(config(['爸爸', '妈妈', '妹妹']), config(['爸爸']), base);
+    expect(merged).toEqual(config(['爸爸', '妹妹']));
+  });
+
+  it('基准外新增：任一边加入即保留', () => {
+    const base = config(['爸爸']);
+    expect(mergeConfig(config(['爸爸', '妹妹']), config(['爸爸']), base)).toEqual(
+      config(['爸爸', '妹妹']),
+    );
+    expect(mergeConfig(config(['爸爸']), config(['爸爸', '爷爷']), base)).toEqual(
+      config(['爸爸', '爷爷']),
+    );
+  });
+
+  it('两边都没动 → 原样返回', () => {
+    const same = config(['爸爸', '妈妈'], ['家里', '影院']);
+    expect(mergeConfig(same, config(['爸爸', '妈妈'], ['家里', '影院']), same)).toEqual(same);
+  });
+
+  it('customLocations 同样支持删除传播', () => {
+    const base = config(['爸爸'], ['家里', '影院', '外婆家']);
+    const merged = mergeConfig(
+      config(['爸爸'], ['影院', '外婆家']),
+      config(['爸爸'], ['家里', '影院', '外婆家']),
+      base,
+    );
+    expect(merged.customLocations).toEqual(['影院', '外婆家']);
   });
 });

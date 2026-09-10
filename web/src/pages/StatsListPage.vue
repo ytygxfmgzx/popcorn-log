@@ -11,7 +11,7 @@ import type { WatchRecord } from '@/types';
 
 /**
  * 统计明细列表：从统计页分布榜点进来，展示某个筛选组合下的全部记录。
- * query: member / location / genre（单值）+ range / start / end（时间窗继承统计页）
+ * query: member / location / genre / person(+personType)（单值）+ range / start / end（时间窗继承统计页）
  */
 const route = useRoute();
 const router = useRouter();
@@ -23,6 +23,11 @@ const filter = computed<StatsFilter>(() => {
   const member = route.query.member ? String(route.query.member) : '';
   const location = route.query.location ? String(route.query.location) : '';
   const genre = route.query.genre ? String(route.query.genre) : '';
+  const personName = route.query.person ? String(route.query.person) : '';
+  const personType =
+    route.query.personType === 'director' || route.query.personType === 'cast'
+      ? (route.query.personType as 'cast' | 'director')
+      : 'cast';
   return {
     range: (['week', 'month', 'halfYear', 'year', 'all', 'custom'] as const).includes(
       route.query.range as StatsRange,
@@ -34,6 +39,7 @@ const filter = computed<StatsFilter>(() => {
     members: member ? [member] : [],
     locations: location ? [location] : [],
     genres: genre ? [genre] : [],
+    person: personName ? { name: personName, type: personType } : undefined,
   };
 });
 
@@ -41,8 +47,19 @@ const title = computed(() => {
   const member = route.query.member ? String(route.query.member) : '';
   const location = route.query.location ? String(route.query.location) : '';
   const genre = route.query.genre ? String(route.query.genre) : '';
-  const kind = member ? '成员' : location ? '在哪看' : genre ? '类型' : '记录';
-  const value = member || location || genre || '';
+  const person = route.query.person ? String(route.query.person) : '';
+  const personKind =
+    route.query.personType === 'director' ? '导演' : route.query.personType === 'cast' ? '演员' : '';
+  const kind = member
+    ? '成员'
+    : location
+      ? '在哪看'
+      : genre
+        ? '类型'
+        : person
+          ? personKind
+          : '记录';
+  const value = member || location || genre || person || '';
   return value ? `${kind} · ${value}` : '记录明细';
 });
 
