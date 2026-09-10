@@ -7,6 +7,14 @@ import type { CloudFileMeta, Credentials } from '@/types';
  * 前端只持有同步密码（Bearer），R2 密钥/绑定全在服务端；无 CORS 问题。
  */
 
+/** Worker 清单响应 {key,etag} → 前端 CloudFileMeta {file,etag}（字段映射独立成纯函数，spec 防字段名回归） */
+export function mapWorkerListResponse(body: { files?: { key?: unknown; etag?: unknown }[] }): CloudFileMeta[] {
+  return (body.files ?? []).map((item) => ({
+    file: typeof item.key === 'string' ? item.key : '',
+    etag: typeof item.etag === 'string' ? item.etag : undefined,
+  }));
+}
+
 export function createWorkerStore(credentials: Credentials): CloudStore {
   const password = credentials.syncPassword as string;
 
@@ -29,15 +37,22 @@ export function createWorkerStore(credentials: Credentials): CloudStore {
     throw new CloudError(body.error ?? `${action}失败（${resp.status}）`, resp.status);
   }
 
+  /** 请求前防御：key 必须是合法形态，杜绝 undefined/空串流向网络层 */
+  function assertKey(key: string): void {
+    if (!key || (key !== 'config.json' && !key.startsWith('records/'))) {
+      throw new CloudError(`内部错误：非法文件名 ${String(key)}`, 0);
+    }
+  }
+
   return {
     async listRecords(): Promise<CloudFileMeta[]> {
       const resp = await syncFetch('/sync/list?prefix=records/');
       if (!resp.ok) await parseError(resp, '拉取云端清单');
-      const body = (await resp.json()) as { files: CloudFileMeta[] };
-      return body.files;
+      return mapWorkerListResponse(await resp.json());
     },
 
     async fetchFile(key) {
+      assertKey(key);
       const resp = await syncFetch(`/sync/file?key=${encodeURIComponent(key)}`);
       if (resp.status === 404) return { text: null };
       if (!resp.ok) await parseError(resp, `下载 ${key}`);
@@ -46,6 +61,7 @@ export function createWorkerStore(credentials: Credentials): CloudStore {
     },
 
     async putFileText(key, body, ifMatch) {
+      assertKey(key);
       const query = `key=${encodeURIComponent(key)}${ifMatch ? `&ifMatch=${encodeURIComponent(ifMatch)}` : ''}`;
       const resp = await syncFetch(`/sync/file?${query}`, {
         method: 'PUT',
