@@ -103,7 +103,7 @@ async function handleSync(request: Request, env: Env, url: URL): Promise<Respons
 
   // 下载
   if (request.method === 'GET' && action === '/sync/file') {
-    if (!isAllowedKey(key)) return errorResponse('不支持的 key', 403);
+    if (!isAllowedKey(key)) return errorResponse(`不支持的 key: ${key}`, 403);
     const object = await env.BUCKET.get(key);
     if (!object) return errorResponse('not found', 404);
     return jsonResponse({ etag: object.etag, content: await object.text() });
@@ -111,7 +111,7 @@ async function handleSync(request: Request, env: Env, url: URL): Promise<Respons
 
   // 上传（可选乐观锁：ifMatch 与云端 etag 不符 → 412，对应前端冲突协议）
   if (request.method === 'PUT' && action === '/sync/file') {
-    if (!isAllowedKey(key)) return errorResponse('不支持的 key', 403);    const body = await request.text();
+    if (!isAllowedKey(key)) return errorResponse(`不支持的 key: ${key}`, 403);    const body = await request.text();
     const ifMatch = url.searchParams.get('ifMatch') ?? undefined;
     const options: R2PutOptions = {};
     if (ifMatch) options.onlyIf = { etagMatches: ifMatch };

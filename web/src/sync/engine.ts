@@ -1,7 +1,7 @@
 import { db } from '@/db/dexie';
 import { getCredentials, isCredentialsComplete } from '@/db/credentials';
 import { getAppSettings, saveAppSettings } from '@/db/settings';
-import { getCloudStore, withBackoff, type CloudStore } from '@/services/cloud';
+import { getCloudStore, withBackoff, CloudError, type CloudStore, type PutResult } from '@/services/cloud';
 import { fetchAndCacheMovie } from '@/services/tmdb';
 import { chunk, diffRemote } from './diff';
 import { mergeConfig, normalizeRemoteConfig, normalizeRemoteRecord } from './merge';
@@ -114,7 +114,19 @@ async function pushPhase(store: CloudStore, summary: SyncSummary): Promise<void>
     }
     const { file, ifMatch } = planPush(state, record);
     await withBackoff(async () => {
-      const result = await store.putFileText(file, JSON.stringify(record), ifMatch);
+      let usedFile = file;
+      let result: PutResult;
+      try {
+        result = await store.putFileText(file, JSON.stringify(record), ifMatch);
+      } catch (error) {
+        // 403 = key 非法：底账 cloudFile 疑为历史脏值，按记录现算文件名无锁重试一次（自愈）
+        if (error instanceof CloudError && error.status === 403) {
+          usedFile = recordCloudFile(record);
+          result = await store.putFileText(usedFile, JSON.stringify(record), undefined);
+        } else {
+          throw error;
+        }
+      }
       if (result.conflict) {
         await db.syncStates.put({ ...state, status: 'conflict' });
         summary.conflicts++;
@@ -122,7 +134,7 @@ async function pushPhase(store: CloudStore, summary: SyncSummary): Promise<void>
       }
       await db.syncStates.put({
         recordId: state.recordId,
-        cloudFile: file,
+        cloudFile: usedFile,
         // 上传响应缺 etag 时保留旧值 → 下轮清单比对会多拉一次自愈
         cloudEtag: result.etag ?? state.cloudEtag,
         status: 'synced',
