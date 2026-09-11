@@ -41,7 +41,7 @@ const { data: rows, isLoading } = useLiveQuery<WatchlistRow[]>(async () => {
   );
 }, []);
 
-/* 筛选：默认全部；「待看」隐藏已看过（本地已有同片手帐）的条目 */
+/* 筛选：默认全部；「未看过」隐藏已看过（本地已有同片手帐）的条目 */
 type Filter = 'all' | 'pending';
 const filter = ref<Filter>('all');
 const pendingCount = computed(() => rows.value.filter((row) => !row.viewedCount).length);
@@ -98,7 +98,7 @@ function metaLine(meta?: MovieMeta): string {
       <!-- 搜片即入列 -->
       <MoviePicker placeholder="搜片名，加入想看" @select="onAdd" />
 
-      <!-- 筛选：全部 / 待看（已看过 = 本地已有同片手帐） -->
+      <!-- 筛选：全部 / 未看过（已看过 = 本地已有同片手帐） -->
       <div v-if="rows.length" class="filter">
         <button
           class="filter-btn"
@@ -112,7 +112,7 @@ function metaLine(meta?: MovieMeta): string {
           :class="{ active: filter === 'pending' }"
           @click="filter = 'pending'"
         >
-          待看 {{ pendingCount }}
+          未看过 {{ pendingCount }}
         </button>
       </div>
 
@@ -152,7 +152,7 @@ function metaLine(meta?: MovieMeta): string {
         <EmptyState
           v-if="!visible.length"
           :emoji="filter === 'pending' ? '🍿' : '⭐'"
-          :title="filter === 'pending' ? '待看的都看完啦' : '想看清单还是空的'"
+          :title="filter === 'pending' ? '清单里的都看过啦' : '想看清单还是空的'"
           :subtitle="filter === 'pending' ? '去「全部」里回看，或搜下一部想看的' : '搜一部电影，安排下一次家庭观影'"
         />
       </template>
