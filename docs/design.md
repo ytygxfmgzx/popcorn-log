@@ -13,7 +13,7 @@
 |---|---|---|
 | MVP | 单机记录 + TMDB 搜片联动 + 海报缓存 + JSON 备份导出 + Worker + README | 本轮 |
 | Sync | 云端双人同步（etag 对账 / If-Match 冲突 / 物理删除+云端删除跟随 / 软合并）+ 基础统计 | 待启动 |
-| Enhance | 想看清单 + 时间轴 + 年度总结卡 + 语音输入 | 待启动 |
+| Enhance | 想看清单 + 时间轴 + 年度总结卡 + 语音输入 | 想看清单已交付，其余待启动 |
 
 ## 2. 总体架构
 
@@ -79,7 +79,8 @@ popcorn-log/
 | 手账首页 | `/` | MVP | 记录卡片流（watchedDate 倒序）+ FAB + SyncIndicator + EmptyState |
 | 录入/编辑 | `/record/new`、`/record/:id/edit` | MVP | 零输入原则：搜片（唯一必打）→ 自动填充元数据卡 → 日期（默认今天）→ 地点三点选+自定义 → 成员勾选（记忆组合）→ 点星 → 手记/孩子原话 |
 | 记录详情 | `/record/:id` | MVP | 大海报 + 全元数据 + 编辑 / 删除（Dialog 确认，物理删除本地与云端） |
-| 想看清单 | `/watchlist` | Enhance | 搜片即入列；「看过」跳录入页预填 |
+| 想看清单 | `/watchlist` | Enhance（已交付） | 搜片即入列；「全部 / 待看」筛选（默认全部）；同片已有手帐显示「已看过」徽章，按钮转「再记一次」；「看过」跳录入页预填；左滑移除 |
+| 影片详情 | `/movie/:mediaType/:tmdbId` | Enhance（已交付） | TMDB 元数据 + 简介 + 主演 + 同片观看轨迹直达；底部「看过了，去记录」+ 想看开关 |
 | 统计 | `/stats` | Sync/Enhance | 时间窗 + 组合筛选 + 总览卡 + 榜单反查 |
 | 设置 | `/settings` | MVP 起 | Worker 地址+测试连接；坚果云凭据（Sync）；成员/地点管理；导出备份；版本与更新 |
 | 冲突处理 | `/conflicts` | Sync | 本地/云端对比合并；疑似重复软合并 |
@@ -136,7 +137,8 @@ interface AppSettings {
   lastMembersCombo?: string[]
 }
 
-interface WatchlistItem { id: string; mediaType: MediaType; tmdbId: number; titleSnapshot: string; addedAt: string; removed: boolean }
+interface WatchlistItem { id: string; mediaType: MediaType; tmdbId: number; titleSnapshot: string; addedAt: string }
+// 业务键 = mediaType:tmdbId；同步为 watchlist.json 整文件三向合并（同 config），无需墓碑字段
 ```
 
 ### 6.2 Dexie 表（`web/src/db/`）
@@ -170,6 +172,7 @@ delete 意向（记录行已删、底账保留 cloudFile）→ DELETE 云端对�
 - **首次全量**：>50 条分批（20/批，批间停顿）+ 429/503 指数退避（1s/2s/4s，上限 3 次）
 - **重复识别**：`watchedDate 相同 + tmdbId 相同 + mediaType 相同 + 不同 id + 均未删` → 疑似重复 → 软合并弹层（保留较新主体 + 成员并集 + 手记拼接，可编辑确认）或保留两条
 - **MVP 预埋**：保存/删除即写 `syncStates` pending，Sync 上线后存量数据自动待推送；diff 与去重纯函数 MVP 已实现并测试
+- **想看清单对账**：`watchlist.json` 整文件三向合并（基准 = `watchlistSyncedSnapshot`，语义同 config：单边删除跟随、单边新增保留、同片两边都在取 `addedAt` 较早者）；本地脏或合并结果与云端不同才整文件 If-Match 上传，412 重拉同基准重试一次；Worker 未放行该 key 时 403 静默跳过（部署后自动恢复）；备份 v2 起 watchlist 随导出/导入（合并式，同片取较早 addedAt）
 
 ## 8. 统计引擎（Sync/Enhance）
 

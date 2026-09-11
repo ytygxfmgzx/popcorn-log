@@ -2,12 +2,13 @@ import { db } from '@/db/dexie';
 import { getCredentials, isCredentialsComplete } from '@/db/credentials';
 import { getAppSettings, saveAppSettings } from '@/db/settings';
 import { migrateLegacyTombstones } from '@/db/records';
-import { getCloudStore, withBackoff, CloudError, type CloudStore, type PutResult } from '@/services/cloud';
+import { applyWatchlist } from '@/db/watchlist';
+import { getCloudStore, withBackoff, CloudError, type CloudStore, type FetchedFile, type PutResult } from '@/services/cloud';
 import { fetchAndCacheMovie } from '@/services/tmdb';
 import { chunk, diffRemote, planRemoteDeletions } from './diff';
-import { mergeConfig, normalizeRemoteConfig, normalizeRemoteRecord } from './merge';
+import { mergeConfig, mergeWatchlist, normalizeRemoteConfig, normalizeRemoteRecord, normalizeRemoteWatchlist } from './merge';
 import { recordCloudFile } from '@/utils/filename';
-import { movieKey, type CloudConfig, type SyncState, type WatchRecord } from '@/types';
+import { movieKey, watchlistKey, type CloudConfig, type SyncState, type WatchRecord, type WatchlistItem } from '@/types';
 
 /** 一轮同步的结果汇总（手动同步后 toast 展示用） */
 export interface SyncSummary {
@@ -60,6 +61,7 @@ export async function runSync(): Promise<SyncSummary | null> {
     await pullPhase(store, summary);
     await pushPhase(store, summary);
     await configPhase(store);
+    await watchlistPhase(store);
     await saveAppSettings({ lastSyncedAt: new Date().toISOString() });
     return summary;
   } finally {
@@ -239,6 +241,104 @@ async function configPhase(store: CloudStore): Promise<void> {
 }
 
 const EMPTY_CONFIG: CloudConfig = { members: [], customLocations: [] };
+
+/**
+ * watchlist.json 对账（想看清单，三向合并，删除可传播）：
+ * 语义同 configPhase——以 watchlistSyncedSnapshot 为基准合并本地与云端，
+ * 合并结果与本地不一致 → 重写本地表（liveQuery 自动刷 UI）；
+ * 本地有变化、或合并结果与云端不同 → 整文件上传（If-Match），412 重拉同基准再合并重试一次。
+ * 403 = 旧版 Worker 尚未放行 watchlist.json：静默跳过本轮（本地数据无损，部署后自动恢复）。
+ */
+async function watchlistPhase(store: CloudStore): Promise<void> {
+  const fetched = await fetchWatchlistFile(store);
+  if (fetched === null) return; // 旧版 Worker 不认识该 key，等部署后下轮再试
+
+  const app = await getAppSettings();
+  const local = await db.watchlist.toArray();
+  const base = app.watchlistSyncedSnapshot ?? [];
+  const remote = fetched.text ? normalizeRemoteWatchlist(safeJsonParse(fetched.text)) : null;
+
+  const merged = mergeWatchlist(local, remote ?? [], base);
+  const remoteHasNew = !watchlistEquals(merged, local);
+  if (remoteHasNew) {
+    await applyWatchlist(merged);
+  }
+  const finalList = remoteHasNew ? merged : local;
+
+  const localDirty =
+    !app.watchlistSyncedSnapshot || !watchlistEquals(local, app.watchlistSyncedSnapshot);
+  const remoteExists = remote !== null;
+  const cloudUpToDate = remoteExists && watchlistEquals(finalList, remote) && !localDirty;
+  if (cloudUpToDate) {
+    if (fetched.etag !== app.watchlistEtag) {
+      await saveAppSettings({ watchlistEtag: fetched.etag, watchlistSyncedSnapshot: finalList });
+    }
+    return;
+  }
+  if (!remoteExists && !localDirty) return; // 两边都空，无需上传
+
+  // 云端已有文件 → If-Match；新建 → 无锁创建；403 = 旧版 Worker，静默跳过
+  const ifMatch = remoteExists ? (fetched.etag ?? app.watchlistEtag) : undefined;
+  let result = await putWatchlistFile(store, finalList, ifMatch);
+  if (!result) return;
+  let uploaded = finalList;
+  let uploadedEtag = fetched.etag;
+  if (result.conflict) {
+    // 对方刚改过：重拉 → 以同一基准再合并 → 带新 etag 重试一次
+    const fresh = await store.fetchFile('watchlist.json');
+    const freshRemote = fresh.text ? normalizeRemoteWatchlist(safeJsonParse(fresh.text)) : null;
+    const retry = mergeWatchlist(finalList, freshRemote ?? [], base);
+    if (!watchlistEquals(retry, finalList)) {
+      await applyWatchlist(retry);
+    }
+    uploaded = retry;
+    uploadedEtag = fresh.etag;
+    result = await putWatchlistFile(store, retry, fresh.etag);
+    if (!result) return;
+  }
+  if (result.ok) {
+    await saveAppSettings({
+      watchlistEtag: result.etag ?? uploadedEtag,
+      watchlistSyncedSnapshot: uploaded,
+    });
+  }
+  // 再冲突就留给下一轮（数据无损）
+}
+
+/** GET watchlist.json；403（旧版 Worker 未放行该 key）返回 null 跳过本轮 */
+async function fetchWatchlistFile(store: CloudStore): Promise<FetchedFile | null> {
+  try {
+    return await store.fetchFile('watchlist.json');
+  } catch (error) {
+    if (error instanceof CloudError && error.status === 403) return null;
+    throw error;
+  }
+}
+
+/** PUT watchlist.json；403 同上，返回 null 静默跳过 */
+async function putWatchlistFile(
+  store: CloudStore,
+  items: WatchlistItem[],
+  ifMatch?: string,
+): Promise<PutResult | null> {
+  try {
+    return await store.putFileText('watchlist.json', JSON.stringify(items), ifMatch);
+  } catch (error) {
+    if (error instanceof CloudError && error.status === 403) return null;
+    throw error;
+  }
+}
+
+/** 清单比对：业务键集合 + addedAt 一致即视为相同（顺序无关，字段顺序不影响） */
+function watchlistEquals(a: WatchlistItem[], b: WatchlistItem[]): boolean {
+  if (a.length !== b.length) return false;
+  const signature = (items: WatchlistItem[]) =>
+    items
+      .map((item) => `${watchlistKey(item)}\u0000${item.addedAt}`)
+      .sort()
+      .join('\u0001');
+  return signature(a) === signature(b);
+}
 
 function configEquals(a: CloudConfig, b: CloudConfig): boolean {
   return (

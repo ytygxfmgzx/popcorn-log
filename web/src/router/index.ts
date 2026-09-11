@@ -6,6 +6,8 @@ import SettingsPage from '@/pages/SettingsPage.vue';
 import ConflictsPage from '@/pages/ConflictsPage.vue';
 import StatsPage from '@/pages/StatsPage.vue';
 import StatsListPage from '@/pages/StatsListPage.vue';
+import WatchlistPage from '@/pages/WatchlistPage.vue';
+import MovieDetailPage from '@/pages/MovieDetailPage.vue';
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -28,7 +30,8 @@ const router = createRouter({
     { path: '/conflicts', name: 'conflicts', component: ConflictsPage },
     { path: '/stats', name: 'stats', component: StatsPage, meta: { tabbar: 'stats' } },
     { path: '/stats/list', name: 'stats-list', component: StatsListPage },
-    { path: '/watchlist', redirect: '/' }, // Enhance 阶段：想看清单
+    { path: '/watchlist', name: 'watchlist', component: WatchlistPage, meta: { tabbar: 'watchlist' } },
+    { path: '/movie/:mediaType/:tmdbId', name: 'movie-detail', component: MovieDetailPage },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 });

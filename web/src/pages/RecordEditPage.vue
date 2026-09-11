@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { showToast } from 'vant';
 import { db } from '@/db/dexie';
 import { saveRecord } from '@/db/records';
+import { removeFromWatchlist } from '@/db/watchlist';
 import { getAppSettings, saveAppSettings } from '@/db/settings';
 import { fetchAndCacheMovie, getCachedMovie, type MovieBrief } from '@/services/tmdb';
 import MoviePicker from '@/components/MoviePicker.vue';
@@ -13,7 +14,7 @@ import StarRating from '@/components/StarRating.vue';
 import PosterImage from '@/components/PosterImage.vue';
 import { todayStr, formatRuntime } from '@/utils/date';
 import { newId } from '@/utils/id';
-import type { MovieMeta, WatchRecord } from '@/types';
+import type { MediaType, MovieMeta, WatchRecord } from '@/types';
 
 const route = useRoute();
 const router = useRouter();
@@ -44,6 +45,14 @@ onMounted(async () => {
     if (appSettings.lastMembersCombo?.length) {
       form.members = [...appSettings.lastMembersCombo];
     }
+    // 想看列表 / 影片详情的「看过」入口：query 带片直接预填
+    const queryType = route.query.mediaType;
+    const preMediaType =
+      queryType === 'movie' || queryType === 'tv' ? (queryType as MediaType) : null;
+    const preTmdbId = Number(route.query.tmdbId);
+    if (preMediaType && Number.isFinite(preTmdbId) && preTmdbId > 0) {
+      await preselect(preMediaType, preTmdbId);
+    }
     return;
   }
   const record = await db.records.get(editingId.value);
@@ -72,6 +81,20 @@ async function onSelect(brief: MovieBrief): Promise<void> {
   try {
     meta.value = await fetchAndCacheMovie(brief.mediaType, brief.tmdbId);
     selected.value = brief;
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : '影片信息获取失败');
+  } finally {
+    loadingMeta.value = false;
+  }
+}
+
+/** query 预填（等价搜索选中，失败留在空表单由用户手动搜） */
+async function preselect(mediaType: MediaType, tmdbId: number): Promise<void> {
+  loadingMeta.value = true;
+  try {
+    const loaded = await fetchAndCacheMovie(mediaType, tmdbId);
+    meta.value = loaded;
+    selected.value = { mediaType, tmdbId, title: loaded.title };
   } catch (error) {
     showToast(error instanceof Error ? error.message : '影片信息获取失败');
   } finally {
@@ -138,8 +161,16 @@ async function save(): Promise<void> {
 
   await saveRecord(record);
   await saveAppSettings({ lastMembersCombo: [...form.members] });
+  // 新增手帐 = 看过了：自动移出想看清单（不在列时为 no-op；编辑旧手帐不动，防误删）
+  if (!isEdit.value) {
+    await removeFromWatchlist(brief.mediaType, brief.tmdbId);
+  }
   showToast('已保存');
   if (isEdit.value) {
+    router.back();
+  } else if (route.query.from === 'watchlist') {
+    void router.replace('/watchlist');
+  } else if (route.query.from === 'movie') {
     router.back();
   } else {
     void router.replace('/');

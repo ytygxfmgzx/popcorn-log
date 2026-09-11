@@ -19,10 +19,11 @@ export interface Env {
 const TMDB_API_BASE = 'https://api.themoviedb.org/3/';
 const TMDB_IMAGE_BASE = 'https://image.tmdb.org/';
 
-/** 同步允许读写的对象 key（一事件一文件 + 共享配置），其余一律 403。
+/** 同步允许读写的对象 key（一事件一文件 + 共享配置 + 想看清单），其余一律 403。
  *  结构校验而非字符集枚举：records/ 前缀 + .json 后缀 + 禁路径穿越，杜绝"漏字符"类边界 bug。 */
 function isAllowedKey(key: string): boolean {
   if (key === 'config.json') return true;
+  if (key === 'watchlist.json') return true;
   return key.startsWith('records/') && key.endsWith('.json') && !key.includes('..') && key.length > 'records/.json'.length;
 }
 

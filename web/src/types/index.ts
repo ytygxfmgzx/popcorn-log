@@ -85,6 +85,10 @@ export interface AppSettings {
   configSyncedSnapshot?: CloudConfig;
   /** 用户已确认「是两场，都保留」的疑似重复组 key（watchedDate|mediaType|tmdbId），不再提示 */
   hiddenDuplicateKeys?: string[];
+  /** 云端 watchlist.json 的 etag 底账（整文件 If-Match 用） */
+  watchlistEtag?: string;
+  /** 上次想看清单对账完成时的本地快照，用于脏检测（相对快照有变化才上传） */
+  watchlistSyncedSnapshot?: WatchlistItem[];
   /** 最近一次同步完成时间（ISO UTC，仅簿记展示） */
   lastSyncedAt?: string;
 }
@@ -123,14 +127,18 @@ export type SettingRow =
   | { key: 'app'; value: AppSettings }
   | { key: 'credentials'; value: Credentials };
 
-/** 想看清单（Enhance 阶段） */
+/** 想看清单条目（业务键 = mediaType:tmdbId；同步走云端 watchlist.json 整文件三向合并，无需墓碑） */
 export interface WatchlistItem {
   id: string;
   mediaType: MediaType;
   tmdbId: number;
   titleSnapshot: string;
+  /** ISO UTC，加入想看的时间 */
   addedAt: string;
-  removed: boolean;
+}
+
+export function watchlistKey(item: Pick<WatchlistItem, 'mediaType' | 'tmdbId'>): string {
+  return `${item.mediaType}:${item.tmdbId}`;
 }
 
 /** 初始默认地点（新装默认值与 v2 迁移源）；入库后即普通数据，可删可同步 */

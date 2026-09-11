@@ -11,6 +11,7 @@ const currentTab = computed(() => route.meta.tabbar ?? '');
 
 function onTabChange(name: string | number): void {
   if (name === 'home') void router.push('/');
+  if (name === 'watchlist') void router.push('/watchlist');
   if (name === 'stats') void router.push('/stats');
   if (name === 'settings') void router.push('/settings');
 }
@@ -23,7 +24,7 @@ onMounted(setupAutoSync);
   <UpdatePrompt />
   <router-view />
 
-  <!-- Tabbar：想看为 Enhance 阶段，暂置灰 -->
+  <!-- Tabbar：手账 / 想看 / 统计 / 设置 -->
   <van-tabbar
     v-if="currentTab"
     :model-value="currentTab"
@@ -35,7 +36,7 @@ onMounted(setupAutoSync);
       手账
       <template #icon><span class="tab-icon">📖</span></template>
     </van-tabbar-item>
-    <van-tabbar-item name="watchlist" disabled>
+    <van-tabbar-item name="watchlist">
       想看
       <template #icon><span class="tab-icon">⭐</span></template>
     </van-tabbar-item>

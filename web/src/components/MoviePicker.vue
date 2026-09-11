@@ -7,6 +7,10 @@ import { searchTitles, type MovieBrief } from '@/services/tmdb';
  * 搜片联想：唯一必打字段。防抖 300ms → 经 Worker 调 TMDB multi 搜索。
  * 搜索结果小图直连 Worker（w92，不入 blob 库）；选中后的海报由元数据卡负责缓存。
  */
+const props = defineProps<{
+  placeholder?: string;
+}>();
+
 const emit = defineEmits<{
   select: [brief: MovieBrief];
 }>();
@@ -67,7 +71,7 @@ function posterUrl(posterPath?: string): string | undefined {
       <input
         v-model="query"
         type="search"
-        placeholder="搜片名，如“波妞”"
+        :placeholder="props.placeholder ?? '搜片名，如“波妞”'"
         enterkeyhint="search"
       />
       <span v-if="searching" class="loading"><van-loading size="16" /></span>

@@ -242,6 +242,7 @@ async function onImportFile(event: Event): Promise<void> {
   try {
     const result = await restoreBackup(file);
     const parts = [`新增 ${result.added}`, `更新 ${result.updated}`, `跳过 ${result.skipped}`];
+    if (result.watchlistChanged) parts.push(`想看 ${result.watchlistChanged}`);
     showToast(`导入完成：${parts.join(' · ')}${result.invalid ? `（无效 ${result.invalid} 条已忽略）` : ''}`);
   } catch (error) {
     showToast(error instanceof Error ? error.message : '导入失败');
@@ -395,7 +396,7 @@ async function onImportFile(event: Event): Promise<void> {
           @change="onImportFile"
         />
         <p class="group-hint">
-          备份包含全部观影记录与影片信息（不含密码与海报图片）。建议每月导出一次；
+          备份包含全部观影记录、想看清单与影片信息（不含密码与海报图片）。建议每月导出一次；
           导入为合并式：新增缺失记录，同一条保留较新版本，不会清空现有数据。
         </p>
       </div>
@@ -404,7 +405,7 @@ async function onImportFile(event: Event): Promise<void> {
       <h2 class="group-title">关于</h2>
       <div class="card group about">
         <p>Popcorn Log</p>
-        <p>v{{ appVersion }} · 想看清单规划中</p>
+        <p>v{{ appVersion }}</p>
       </div>
     </main>
 

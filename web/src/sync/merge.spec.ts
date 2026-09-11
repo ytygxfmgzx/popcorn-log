@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { mergeConfig, normalizeRemoteConfig, normalizeRemoteRecord, softMerge } from './merge';
-import type { WatchRecord } from '@/types';
+import {
+  mergeConfig,
+  mergeWatchlist,
+  normalizeRemoteConfig,
+  normalizeRemoteRecord,
+  normalizeRemoteWatchlist,
+  softMerge,
+} from './merge';
+import type { WatchRecord, WatchlistItem } from '@/types';
 
 function record(overrides: Partial<WatchRecord>): WatchRecord {
   return {
@@ -149,5 +156,102 @@ describe('mergeConfig', () => {
       base,
     );
     expect(merged.customLocations).toEqual(['影院', '外婆家']);
+  });
+});
+
+/* ---------------- 想看清单 ---------------- */
+
+function wish(overrides: Partial<WatchlistItem>): WatchlistItem {
+  return {
+    id: 'w1',
+    mediaType: 'movie',
+    tmdbId: 10478,
+    titleSnapshot: '崖上的波妞',
+    addedAt: '2026-09-01T10:00:00Z',
+    ...overrides,
+  };
+}
+
+describe('normalizeRemoteWatchlist', () => {
+  it('合法条目通过并忽略未知字段', () => {
+    const normalized = normalizeRemoteWatchlist([{ ...wish({}), extraFutureField: 'x' }]);
+    expect(normalized).toEqual([wish({})]);
+  });
+
+  it('脏数据整条丢弃，不炸同步', () => {
+    expect(normalizeRemoteWatchlist('junk')).toEqual([]);
+    expect(
+      normalizeRemoteWatchlist([
+        null,
+        { id: '' }, // 缺 id
+        { id: 'w2', mediaType: 'movie', tmdbId: 1, titleSnapshot: '', addedAt: 'x' }, // 缺快照/时间
+        { id: 'w3', mediaType: 'person', tmdbId: 2, titleSnapshot: 'x', addedAt: 'x' }, // 非法 mediaType
+      ]),
+    ).toEqual([]);
+  });
+
+  it('同业务键重复条目只保留第一条', () => {
+    const normalized = normalizeRemoteWatchlist([
+      wish({ id: 'w1' }),
+      wish({ id: 'w2', addedAt: '2026-08-01T00:00:00Z' }),
+    ]);
+    expect(normalized).toHaveLength(1);
+    expect(normalized[0]?.id).toBe('w1');
+  });
+});
+
+describe('mergeWatchlist', () => {
+  it('无基准（首次同步）：退化为并集', () => {
+    const merged = mergeWatchlist(
+      [wish({ id: 'a', tmdbId: 1 })],
+      [wish({ id: 'b', tmdbId: 2 }), wish({ id: 'c', tmdbId: 1 })],
+    );
+    expect(merged.map((item) => item.tmdbId).sort()).toEqual([1, 2]);
+  });
+
+  it('本地删除 → 跟随删除（可上传传播）', () => {
+    const base = [wish({ id: 'a', tmdbId: 1 }), wish({ id: 'b', tmdbId: 2 })];
+    expect(mergeWatchlist([wish({ id: 'a', tmdbId: 1 })], base, base)).toEqual([
+      wish({ id: 'a', tmdbId: 1 }),
+    ]);
+  });
+
+  it('本地未动、云端删除 → 跟随删除（拉取时写回本地）', () => {
+    const base = [wish({ id: 'a', tmdbId: 1 }), wish({ id: 'b', tmdbId: 2 })];
+    expect(mergeWatchlist(base, [wish({ id: 'a', tmdbId: 1 })], base)).toEqual([
+      wish({ id: 'a', tmdbId: 1 }),
+    ]);
+  });
+
+  it('并发共存：本地新增 + 云端删除互不吞没', () => {
+    const base = [wish({ id: 'a', tmdbId: 1 }), wish({ id: 'b', tmdbId: 2 })];
+    const merged = mergeWatchlist(
+      [wish({ id: 'a', tmdbId: 1 }), wish({ id: 'c', tmdbId: 3 })],
+      [wish({ id: 'a', tmdbId: 1 })],
+      base,
+    );
+    expect(merged.map((item) => item.tmdbId)).toEqual([1, 3]);
+  });
+
+  it('同键两边都在（独立新增同一部片）→ 取 addedAt 较早者', () => {
+    const merged = mergeWatchlist(
+      [wish({ id: 'local', addedAt: '2026-09-05T00:00:00Z' })],
+      [wish({ id: 'remote', addedAt: '2026-09-01T00:00:00Z' })],
+    );
+    expect(merged).toEqual([wish({ id: 'remote', addedAt: '2026-09-01T00:00:00Z' })]);
+  });
+
+  it('输出按 addedAt 升序（稳定序列化，顺序无关输入）', () => {
+    const c = wish({ id: 'c', tmdbId: 3, addedAt: '2026-09-03T00:00:00Z' });
+    const a = wish({ id: 'a', tmdbId: 1, addedAt: '2026-09-01T00:00:00Z' });
+    const b = wish({ id: 'b', tmdbId: 2, addedAt: '2026-09-02T00:00:00Z' });
+    expect(mergeWatchlist([c, a], [b])).toEqual([a, b, c]);
+  });
+
+  it('movie/tv 同 id 不同类型视为不同条目', () => {
+    const merged = mergeWatchlist([wish({ mediaType: 'movie', tmdbId: 7 })], [
+      wish({ id: 'w2', mediaType: 'tv', tmdbId: 7 }),
+    ]);
+    expect(merged).toHaveLength(2);
   });
 });

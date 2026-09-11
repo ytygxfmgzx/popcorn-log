@@ -39,7 +39,7 @@ export function createWorkerStore(credentials: Credentials): CloudStore {
 
   /** 请求前防御：key 必须是合法形态，杜绝 undefined/空串流向网络层 */
   function assertKey(key: string): void {
-    if (!key || (key !== 'config.json' && !key.startsWith('records/'))) {
+    if (!key || (key !== 'config.json' && key !== 'watchlist.json' && !key.startsWith('records/'))) {
       throw new CloudError(`内部错误：非法文件名 ${String(key)}`, 0);
     }
   }

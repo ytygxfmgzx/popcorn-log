@@ -1,10 +1,10 @@
 import { db } from '@/db/dexie';
 import { getAppSettings, saveAppSettings } from '@/db/settings';
-import { normalizeRemoteRecord } from '@/sync/merge';
+import { normalizeRemoteRecord, normalizeRemoteWatchlist } from '@/sync/merge';
 import { notifyLocalChange } from '@/sync/schedule';
 import { recordCloudFile } from '@/utils/filename';
 import { toDateStr } from '@/utils/date';
-import type { MovieMeta, SyncState, WatchRecord } from '@/types';
+import { watchlistKey, type MovieMeta, type SyncState, type WatchRecord, type WatchlistItem } from '@/types';
 
 /**
  * 本地数据导出 JSON 备份（IndexedDB 有被系统清除风险，云同步之外的兜底）
@@ -12,10 +12,12 @@ import type { MovieMeta, SyncState, WatchRecord } from '@/types';
  */
 export interface BackupFile {
   app: 'popcorn-log';
-  backupVersion: 1;
+  /** v2：新增 watchlist；导入侧同时接受 v1（无 watchlist 字段视为空） */
+  backupVersion: 2;
   exportedAt: string;
   records: WatchRecord[];
   movies: MovieMeta[];
+  watchlist: WatchlistItem[];
   settings: {
     members: string[];
     customLocations: string[];
@@ -23,17 +25,19 @@ export interface BackupFile {
 }
 
 export async function buildBackup(): Promise<BackupFile> {
-  const [records, movies, appSettings] = await Promise.all([
+  const [records, movies, watchlist, appSettings] = await Promise.all([
     db.records.toArray(),
     db.movies.toArray(),
+    db.watchlist.toArray(),
     getAppSettings(),
   ]);
   return {
     app: 'popcorn-log',
-    backupVersion: 1,
+    backupVersion: 2,
     exportedAt: new Date().toISOString(),
     records,
     movies,
+    watchlist: [...watchlist].sort((a, b) => a.addedAt.localeCompare(b.addedAt)),
     settings: {
       members: appSettings.members,
       customLocations: appSettings.customLocations,
@@ -112,11 +116,52 @@ export interface RestoreResult {
   updated: number;
   skipped: number;
   invalid: number;
+  /** 想看清单新增/更新的条数（v1 备份无此数据，恒为 0） */
+  watchlistChanged: number;
+}
+
+/* ---------- 想看清单导入裁决（纯函数） ---------- */
+
+export interface WatchlistRestorePlan {
+  /** 合并后的完整清单（本地 ∪ 导入，同键取 addedAt 较早者），需写库 */
+  toWrite: WatchlistItem[];
+  /** 导入条数新增/更新了本地（有变化才写库与触发同步） */
+  changed: number;
+  invalid: number;
+}
+
+/** 想看导入（合并式，不删除本地条目）：同片已在列 → 保留最初想看时间（addedAt 较早者） */
+export function planWatchlistRestore(
+  importedRaw: unknown[],
+  localWatchlist: WatchlistItem[],
+): WatchlistRestorePlan {
+  const byKey = new Map(localWatchlist.map((item) => [watchlistKey(item), item]));
+  const imported = normalizeRemoteWatchlist(importedRaw);
+  let changed = 0;
+  let invalid = importedRaw.length - imported.length;
+
+  for (const item of imported) {
+    const key = watchlistKey(item);
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, item);
+      changed++;
+    } else if (item.addedAt < existing.addedAt) {
+      byKey.set(key, item); // 导入方更早想看，保留导入的 addedAt（其余快照字段随之）
+      changed++;
+    }
+  }
+  return {
+    toWrite: [...byKey.values()].sort((a, b) => a.addedAt.localeCompare(b.addedAt)),
+    changed,
+    invalid,
+  };
 }
 
 /**
  * 导入 JSON 备份（合并式）：
  * - 记录按 planRestore 裁决落库，底账标 pending（同 saveRecord 模式），自动触发云同步 push；
+ * - 想看清单按业务键并入本地（同片取较早 addedAt），随 watchlist 对账上云；
  * - 影片元数据为纯缓存，轻校验后直接覆盖；
  * - 成员/地点并入本地设置（本地顺序在前），随 config 对账上云。
  */
@@ -128,7 +173,11 @@ export async function restoreBackup(file: File): Promise<RestoreResult> {
     throw new Error('备份文件解析失败，请确认选择的是导出的 JSON 备份');
   }
   const raw = (typeof parsed === 'object' && parsed !== null ? parsed : {}) as Record<string, unknown>;
-  if (raw.app !== 'popcorn-log' || raw.backupVersion !== 1 || !Array.isArray(raw.records)) {
+  if (
+    raw.app !== 'popcorn-log' ||
+    (raw.backupVersion !== 1 && raw.backupVersion !== 2) ||
+    !Array.isArray(raw.records)
+  ) {
     throw new Error('不是有效的 Popcorn Log 备份文件');
   }
   const importedSettings = (typeof raw.settings === 'object' && raw.settings !== null
@@ -168,6 +217,15 @@ export async function restoreBackup(file: File): Promise<RestoreResult> {
   );
   if (validMovies.length) await db.movies.bulkPut(validMovies);
 
+  // 想看清单并入本地（v1 备份无 watchlist 字段 → 空数组，仅跳过）
+  const watchlistPlan = planWatchlistRestore(
+    Array.isArray(raw.watchlist) ? raw.watchlist : [],
+    await db.watchlist.toArray(),
+  );
+  if (watchlistPlan.changed) {
+    await db.watchlist.bulkPut(watchlistPlan.toWrite);
+  }
+
   const current = await getAppSettings();
   const members = [...current.members];
   for (const member of strList(importedSettings.members)) {
@@ -179,12 +237,13 @@ export async function restoreBackup(file: File): Promise<RestoreResult> {
   }
   await saveAppSettings({ members, customLocations });
 
-  if (items.length) notifyLocalChange();
+  if (items.length || watchlistPlan.changed) notifyLocalChange();
 
   return {
     added: plan.toAdd.length,
     updated: plan.toUpdate.length,
     skipped: plan.skipped,
     invalid: plan.invalid,
+    watchlistChanged: watchlistPlan.changed,
   };
 }
