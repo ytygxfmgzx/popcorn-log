@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, defineComponent, h, reactive, ref } from 'vue';
+import { computed, defineComponent, h, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { db } from '@/db/dexie';
 import { useLiveQuery } from '@/composables/useLiveQuery';
 import { useAppSettings } from '@/composables/useAppSettings';
-import { computeStats, type StatsRange } from '@/stats/aggregate';
-import { todayStr, formatDateFull } from '@/utils/date';
+import StatsFilterBar from '@/components/StatsFilterBar.vue';
+import { statsFilter, filterToQuery } from '@/stats/filter-state';
+import { computeStats, type StatsFilter } from '@/stats/aggregate';
+import { todayStr } from '@/utils/date';
 import { LOCATION_EMOJI } from '@/types';
 
 /** 无记录空态（局部小组件，避免占用 components 目录） */
@@ -24,112 +26,16 @@ const today = todayStr();
 const { data: records } = useLiveQuery(() => db.records.toArray(), []);
 const { data: movies } = useLiveQuery(() => db.movies.toArray(), []);
 
-/* ---------- 筛选状态（时间窗单选 + 成员/地点/类型多选） ---------- */
-const filter = reactive<{
-  range: StatsRange;
-  customStart?: string;
-  customEnd?: string;
-  members: string[];
-  locations: string[];
-  genres: string[];
-}>({ range: 'all', members: [], locations: [], genres: [] });
-
-const RANGE_OPTIONS: { value: StatsRange; label: string }[] = [
-  { value: 'week', label: '本周' },
-  { value: 'month', label: '本月' },
-  { value: 'halfYear', label: '半年' },
-  { value: 'year', label: '一年' },
-  { value: 'all', label: '全部' },
-  { value: 'custom', label: '自定义…' },
-];
-
-const locationOptions = computed(() => settings.value.customLocations);
-const genreOptions = computed(() => {
-  const set = new Set<string>();
-  for (const movie of movies.value) movie.genres.forEach((genre) => set.add(genre));
-  return [...set].sort((a, b) => a.localeCompare(b, 'zh-CN'));
+/* ---------- 筛选状态：filter-state 单例（StatsFilterBar 读写，与明细页共享） ---------- */
+// 统计页不支持主创筛选；从明细页返回时清掉残留，避免图表被带上 person 条件
+onMounted(() => {
+  statsFilter.person = undefined;
 });
-
-const timeDrop = ref();
-const filterDrop = ref();
-
-function pickRange(range: StatsRange): void {
-  if (range === 'custom') {
-    showCustom.value = true;
-    return;
-  }
-  filter.range = range;
-  timeDrop.value?.toggle(false);
-}
-
-function toggleIn(list: string[], value: string): string[] {
-  return list.includes(value) ? list.filter((item) => item !== value) : [...list, value];
-}
-
-function toggleMember(member: string): void {
-  filter.members = toggleIn(filter.members, member);
-}
-
-function toggleLocation(location: string): void {
-  filter.locations = toggleIn(filter.locations, location);
-}
-
-function toggleGenre(genre: string): void {
-  filter.genres = toggleIn(filter.genres, genre);
-}
-
-const activeFilterCount = computed(
-  () => filter.members.length + filter.locations.length + filter.genres.length,
-);
-
-const filterTitle = computed(() =>
-  activeFilterCount.value ? `筛选 · ${activeFilterCount.value}` : '筛选',
-);
-
-function resetFilter(): void {
-  filter.members = [];
-  filter.locations = [];
-  filter.genres = [];
-}
-
-/* ---------- 自定义时间段 ---------- */
-const showCustom = ref(false);
-const showDatePicker = ref(false);
-const picking = ref<'start' | 'end'>('start');
-const dateModel = ref<string[]>(today.split('-'));
-
-function openDatePicker(which: 'start' | 'end'): void {
-  picking.value = which;
-  const base = which === 'start' ? filter.customStart : filter.customEnd;
-  dateModel.value = (base ?? today).split('-');
-  showDatePicker.value = true;
-}
-
-function confirmDate(): void {
-  const value = dateModel.value.join('-');
-  if (picking.value === 'start') filter.customStart = value;
-  else filter.customEnd = value;
-  showDatePicker.value = false;
-}
-
-function applyCustom(): void {
-  if (!filter.customStart || !filter.customEnd || filter.customStart > filter.customEnd) return;
-  filter.range = 'custom';
-  showCustom.value = false;
-  timeDrop.value?.toggle(false);
-}
 
 /* ---------- 聚合 ---------- */
 const stats = computed(() =>
-  computeStats(records.value, movies.value, filter, settings.value.members, today),
+  computeStats(records.value, movies.value, statsFilter, settings.value.members, today),
 );
-
-const rangeLabel = computed(() => {
-  if (filter.range === 'custom' && filter.customStart && filter.customEnd) {
-    return `${filter.customStart} ~ ${filter.customEnd}`;
-  }
-  return RANGE_OPTIONS.find((option) => option.value === filter.range)?.label ?? '时间';
-});
 
 const hasRecords = computed(() => records.value.some((record) => !record.deleted));
 
@@ -224,27 +130,27 @@ function rankBadge(index: number): string {
   return MEDALS[index] ?? String(index + 1);
 }
 
-function fmtDay(date: string): string {
-  return formatDateFull(date).replace(/\s.*/, '');
-}
-
-/** 分布榜条目 → 明细列表（继承当前时间窗） */
+/**
+ * 分布榜条目 → 明细列表：携带统计页完整筛选（时间窗 + 成员/地点/类型），
+ * 保证明细条数与卡片数字一致。被点击维度按榜单口径合并：
+ * 成员 = 并加（且语义）；地点/类型 = 替换为点击项（单值维度，数字不变）；主创 = 单选。
+ */
 function openDetail(
   kind: 'member' | 'location' | 'genre' | 'cast' | 'director',
   value: string,
 ): void {
-  const query: Record<string, string> = { range: filter.range };
+  const next: StatsFilter = {
+    ...statsFilter,
+    members: kind === 'member' ? [...new Set([...statsFilter.members, value])] : statsFilter.members,
+    locations: kind === 'location' ? [value] : statsFilter.locations,
+    genres: kind === 'genre' ? [value] : statsFilter.genres,
+    person: kind === 'cast' || kind === 'director' ? { name: value, type: kind } : statsFilter.person,
+  };
+  const query: Record<string, string | string[]> = filterToQuery(next);
+  // 单值 key 标记被点击项，供明细页标题使用
   if (kind === 'member') query.member = value;
   if (kind === 'location') query.location = value;
   if (kind === 'genre') query.genre = value;
-  if (kind === 'cast' || kind === 'director') {
-    query.person = value;
-    query.personType = kind;
-  }
-  if (filter.range === 'custom') {
-    query.start = filter.customStart ?? '';
-    query.end = filter.customEnd ?? '';
-  }
   void router.push({ path: '/stats/list', query });
 }
 </script>
@@ -259,69 +165,8 @@ function openDetail(
       <EmptyHint v-if="!hasRecords" />
 
       <template v-else>
-        <!-- 时间窗 + 筛选（下拉，移动端省空间） -->
-        <van-dropdown-menu class="drop-bar">
-          <van-dropdown-item ref="timeDrop" :title="`时间 · ${rangeLabel}`">
-            <div class="drop-list">
-              <span
-                v-for="option in RANGE_OPTIONS"
-                :key="option.value"
-                class="drop-row"
-                :class="{ on: filter.range === option.value }"
-                @click="pickRange(option.value)"
-              >
-                {{ option.label }}
-                <em v-if="filter.range === option.value">✓</em>
-              </span>
-            </div>
-          </van-dropdown-item>
-          <van-dropdown-item ref="filterDrop" :title="filterTitle">
-            <div class="drop-filter">
-              <p class="drop-label">一起看<em class="drop-note">选多个 = 都在场</em></p>
-              <div class="chip-row">
-                <span
-                  v-for="member in settings.members"
-                  :key="member"
-                  class="chip-btn"
-                  :class="{ on: filter.members.includes(member) }"
-                  @click="toggleMember(member)"
-                >
-                  {{ member }}
-                </span>
-              </div>
-              <p class="drop-label">在哪看</p>
-              <div class="chip-row">
-                <span
-                  v-for="location in locationOptions"
-                  :key="location"
-                  class="chip-btn"
-                  :class="{ on: filter.locations.includes(location) }"
-                  @click="toggleLocation(location)"
-                >
-                  {{ location }}
-                </span>
-              </div>
-              <p class="drop-label">类型</p>
-              <div class="chip-row">
-                <span
-                  v-for="genre in genreOptions"
-                  :key="genre"
-                  class="chip-btn"
-                  :class="{ on: filter.genres.includes(genre) }"
-                  @click="toggleGenre(genre)"
-                >
-                  {{ genre }}
-                </span>
-              </div>
-              <div class="drop-actions">
-                <van-button size="small" round @click="resetFilter">重置</van-button>
-                <van-button size="small" round type="primary" @click="filterDrop?.toggle(false)">
-                  完成
-                </van-button>
-              </div>
-            </div>
-          </van-dropdown-item>
-        </van-dropdown-menu>
+        <!-- 时间窗 + 筛选 + 生效条件（与明细页共用组件，状态为模块级单例） -->
+        <StatsFilterBar />
 
         <!-- 总览卡 -->
         <div class="card overview">
@@ -480,43 +325,6 @@ function openDetail(
         </div>
       </template>
     </main>
-
-    <!-- 自定义时间段 -->
-    <van-popup
-      v-model:show="showCustom"
-      position="bottom"
-      round
-      :style="{ maxWidth: '480px', left: '50%', transform: 'translateX(-50%)' }"
-    >
-      <div class="sheet">
-        <h3>自定义时间段</h3>
-        <div class="field-like" @click="openDatePicker('start')">
-          🗓 {{ filter.customStart ? fmtDay(filter.customStart) : '开始日期' }}
-        </div>
-        <div class="field-like" @click="openDatePicker('end')">
-          🗓 {{ filter.customEnd ? fmtDay(filter.customEnd) : '结束日期' }}
-        </div>
-        <van-button block round type="primary" class="sheet-btn" @click="applyCustom">
-          确定
-        </van-button>
-      </div>
-    </van-popup>
-
-    <van-popup
-      v-model:show="showDatePicker"
-      position="bottom"
-      round
-      :style="{ maxWidth: '480px', left: '50%', transform: 'translateX(-50%)' }"
-    >
-      <van-date-picker
-        v-model="dateModel"
-        :title="picking === 'start' ? '开始日期' : '结束日期'"
-        :min-date="new Date(2000, 0, 1)"
-        :max-date="new Date()"
-        @confirm="confirmDate"
-        @cancel="showDatePicker = false"
-      />
-    </van-popup>
   </div>
 </template>
 
@@ -531,70 +339,6 @@ function openDetail(
 .navbar h1 {
   font-size: var(--t-20);
   font-weight: 600;
-}
-
-.drop-bar {
-  border-radius: var(--r-btn);
-  overflow: hidden;
-  margin-bottom: 12px;
-  --van-dropdown-menu-height: 40px;
-}
-
-.drop-list {
-  padding: 4px 0;
-}
-
-.drop-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 11px 16px;
-  font-size: var(--t-15);
-  color: var(--c-text);
-}
-
-.drop-row.on {
-  color: var(--c-primary-active);
-  font-weight: 600;
-}
-
-.drop-row em {
-  font-style: normal;
-}
-
-.drop-filter {
-  padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
-}
-
-.drop-label {
-  font-size: var(--t-12);
-  color: var(--c-text-3);
-  margin: 10px 0 6px;
-}
-
-.drop-label:first-child {
-  margin-top: 0;
-}
-
-.drop-note {
-  font-style: normal;
-  font-size: 11px;
-  margin-left: 6px;
-  color: var(--c-text-3);
-  opacity: 0.85;
-}
-
-.chip-row {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.drop-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 14px;
 }
 
 .overview {
@@ -878,36 +622,6 @@ function openDetail(
   flex: none;
   font-size: var(--t-12);
   color: var(--c-text-3);
-}
-
-/* 自定义时间段弹层 */
-.sheet {
-  padding: 20px 16px calc(16px + env(safe-area-inset-bottom, 0px));
-}
-
-.sheet h3 {
-  font-size: var(--t-17);
-  font-weight: 600;
-  margin-bottom: 12px;
-  text-align: center;
-}
-
-.field-like {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 46px;
-  background: var(--c-bg);
-  border-radius: var(--r-btn);
-  padding: 0 14px;
-  font-size: var(--t-15);
-  color: var(--c-text);
-  cursor: pointer;
-  margin-bottom: 12px;
-}
-
-.sheet-btn {
-  margin-top: 4px;
 }
 
 .empty {

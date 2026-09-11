@@ -5,7 +5,7 @@ import { showConfirmDialog, showToast } from 'vant';
 import { apiBase } from '@/services/api';
 import { getCloudStore } from '@/services/cloud';
 import { getCredentials, saveCredentials } from '@/db/credentials';
-import { buildBackup, downloadBackup } from '@/services/backup';
+import { buildBackup, downloadBackup, restoreBackup } from '@/services/backup';
 import { getAppSettings } from '@/db/settings';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { useDuplicateGroups, useSyncStatus } from '@/composables/useSyncStatus';
@@ -214,6 +214,41 @@ async function exportBackup(): Promise<void> {
     exporting.value = false;
   }
 }
+
+/* ---- 备份导入（合并式） ---- */
+const importing = ref(false);
+const fileInput = ref<HTMLInputElement>();
+
+function pickImportFile(): void {
+  fileInput.value?.click();
+}
+
+async function onImportFile(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = ''; // 重置以支持连续选择同一文件
+  if (!file) return;
+
+  try {
+    await showConfirmDialog({
+      title: '导入备份',
+      message: '将与现有记录合并：新增缺失记录，同一条保留较新版本，不会清空现有数据。确定导入吗？',
+    });
+  } catch {
+    return; // 用户取消
+  }
+
+  importing.value = true;
+  try {
+    const result = await restoreBackup(file);
+    const parts = [`新增 ${result.added}`, `更新 ${result.updated}`, `跳过 ${result.skipped}`];
+    showToast(`导入完成：${parts.join(' · ')}${result.invalid ? `（无效 ${result.invalid} 条已忽略）` : ''}`);
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : '导入失败');
+  } finally {
+    importing.value = false;
+  }
+}
 </script>
 
 <template>
@@ -349,8 +384,19 @@ async function exportBackup(): Promise<void> {
         <button class="row-add" :loading="exporting" @click="exportBackup">
           📦 导出 JSON 备份
         </button>
+        <button class="row-add" :loading="importing" @click="pickImportFile">
+          📥 导入 JSON 备份
+        </button>
+        <input
+          ref="fileInput"
+          type="file"
+          accept=".json,application/json"
+          hidden
+          @change="onImportFile"
+        />
         <p class="group-hint">
-          备份包含全部观影记录与影片信息（不含密码与海报图片）。建议每月导出一次。
+          备份包含全部观影记录与影片信息（不含密码与海报图片）。建议每月导出一次；
+          导入为合并式：新增缺失记录，同一条保留较新版本，不会清空现有数据。
         </p>
       </div>
 
@@ -463,6 +509,7 @@ async function exportBackup(): Promise<void> {
 
 .line-row + .line-row,
 .line-row + .row-add,
+.row-add + .row-add,
 .row-add + .group-hint {
   border-top: 1px solid var(--c-bg);
 }
