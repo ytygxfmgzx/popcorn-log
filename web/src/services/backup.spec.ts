@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { planRestore, planWatchlistRestore } from './backup';
+import { buildBackupMeta, planRestore, planWatchlistRestore } from './backup';
 import type { SyncState, WatchRecord, WatchlistItem } from '@/types';
 
 function record(overrides: Partial<WatchRecord>): WatchRecord {
@@ -29,6 +29,20 @@ function state(overrides: Partial<SyncState>): SyncState {
     ...overrides,
   };
 }
+
+describe('buildBackupMeta', () => {
+  it('版本 2 + 自描述：appVersion 非空，description 覆盖各数组含义与时间格式', () => {
+    const meta = buildBackupMeta();
+    expect(meta.app).toBe('popcorn-log');
+    expect(meta.backupVersion).toBe(2);
+    expect(meta.appVersion).toBeTruthy();
+    expect(meta.exportedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    // 迁移时脱离源码也能理解格式：关键字段语义与时间格式必须在文案里
+    for (const keyword of ['records', 'watchlist', 'movies', 'settings', 'mediaType', 'ISO 8601']) {
+      expect(meta.description).toContain(keyword);
+    }
+  });
+});
 
 describe('planRestore', () => {
   it('本地不存在 → 新增；本地底账 etag 随行供 update 乐观锁', () => {
@@ -65,6 +79,17 @@ describe('planRestore', () => {
     expect(plan.invalid).toBe(4);
     expect(plan.toAdd).toHaveLength(1);
     expect(plan.toAdd[0]?.record.id).toBe('dup');
+  });
+
+  it('条目携带未知附加字段（未来版本备份）→ 忽略后正常裁决', () => {
+    const plan = planRestore(
+      [{ ...record({ id: 'future' }), unknownField: { nested: true } }],
+      [],
+      [],
+    );
+    expect(plan.invalid).toBe(0);
+    expect(plan.toAdd).toHaveLength(1);
+    expect(plan.toAdd[0]?.record).not.toHaveProperty('unknownField');
   });
 });
 

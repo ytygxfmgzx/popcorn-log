@@ -157,9 +157,28 @@ watchlist:  'id, addedAt'
 ```
 /popcorn-log/
   ├─ records/YYYY-MM-DD_<uuid>.json   # 一事件一文件，永不互相覆盖
-  ├─ members.json                     # 低频，整文件 + If-Match
+  ├─ config.json                      # 低频，整文件 + If-Match（members + customLocations）
   └─ watchlist.json                   # 低频，整文件 + If-Match
 ```
+
+### 6.4 备份文件（JSON 导出/导入）
+
+```
+{
+  "app": "popcorn-log",            // 固定标识，导入侧强校验
+  "backupVersion": 2,              // v1 = 无 watchlist 字段（导入视为空）；v2 = 含 watchlist
+  "appVersion": "x.y.z",           // 导出时的应用版本（package.json version）
+  "exportedAt": "…",               // ISO 8601 UTC
+  "description": "…",              // 文件内自描述格式说明（迁移时可脱离源码理解格式；导入侧忽略）
+  "records": WatchRecord[],        // 导入合并式：同 id 取 updatedAt 新者
+  "movies": MovieMeta[],           // 元数据缓存可重建，导入轻校验后覆盖
+  "watchlist": WatchlistItem[],    // 导入合并式：同片取 addedAt 较早者
+  "settings": { members, customLocations }  // 并集并入本地设置
+}
+```
+
+- 不含任何云存储凭据与海报 blob
+- 字段演进策略：**只增字段不升 backupVersion**（如 appVersion/description）——导入侧校验仅认 app/backupVersion/records 三项，未知字段（含条目级）一律忽略，新旧双向兼容
 
 ## 7. 同步协议（Sync 阶段定稿，MVP 预埋）
 
@@ -172,7 +191,7 @@ delete 意向（记录行已删、底账保留 cloudFile）→ DELETE 云端对�
 - **首次全量**：>50 条分批（20/批，批间停顿）+ 429/503 指数退避（1s/2s/4s，上限 3 次）
 - **重复识别**：`watchedDate 相同 + tmdbId 相同 + mediaType 相同 + 不同 id + 均未删` → 疑似重复 → 软合并弹层（保留较新主体 + 成员并集 + 手记拼接，可编辑确认）或保留两条
 - **MVP 预埋**：保存/删除即写 `syncStates` pending，Sync 上线后存量数据自动待推送；diff 与去重纯函数 MVP 已实现并测试
-- **想看清单对账**：`watchlist.json` 整文件三向合并（基准 = `watchlistSyncedSnapshot`，语义同 config：单边删除跟随、单边新增保留、同片两边都在取 `addedAt` 较早者）；本地脏或合并结果与云端不同才整文件 If-Match 上传，412 重拉同基准重试一次；Worker 未放行该 key 时 403 静默跳过（部署后自动恢复）；备份 v2 起 watchlist 随导出/导入（合并式，同片取较早 addedAt）
+- **想看清单对账**：`watchlist.json` 整文件三向合并（基准 = `watchlistSyncedSnapshot`，语义同 config：单边删除跟随、单边新增保留、同片两边都在取 `addedAt` 较早者）；本地脏或合并结果与云端不同才整文件 If-Match 上传，412 重拉同基准重试一次；Worker 未放行该 key 时 403 静默跳过（部署后自动恢复）；备份 v2 起 watchlist 随导出/导入（合并式，同片取较早 addedAt）；本轮从远端并入的条数计入 `SyncSummary.watchlistApplied`，手动同步 toast 以「想看 +N」带出（该 phase 排在整轮最后，进度不可见时易误判数据丢失）
 
 ## 8. 统计引擎（Sync/Enhance）
 

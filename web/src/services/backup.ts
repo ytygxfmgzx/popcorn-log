@@ -10,17 +10,47 @@ import { watchlistKey, type MovieMeta, type SyncState, type WatchRecord, type Wa
  * 本地数据导出 JSON 备份（IndexedDB 有被系统清除风险，云同步之外的兜底）
  * 不含：WebDAV 凭据（绝不导出）、海报 blob（体积大，可从 TMDB 重新拉取）
  */
+/**
+ * 备份文件内的自描述说明（迁移/二次处理时无需源码即可理解格式；
+ * JSON 不支持注释，故以字段承载。格式详情见仓库 docs/design.md）
+ */
+const BACKUP_DESCRIPTION =
+  'Popcorn Log 观影手帐备份。records: 观影记录数组，条目唯一键 id，同 id 合并时 updatedAt 新者胜；' +
+  'watchlist: 想看清单，业务键 mediaType:tmdbId（如 "movie:10191"），addedAt 为加入时间；' +
+  'movies: TMDB 元数据缓存，可安全删除，应用会按需重新拉取；' +
+  'settings: members 成员名册与 customLocations 自定义地点。' +
+  '时间字段：watchedDate 为 YYYY-MM-DD，其余（createdAt/updatedAt/addedAt/exportedAt）为 ISO 8601 UTC；' +
+  "mediaType 取值 'movie' 或 'tv'。";
+
 export interface BackupFile {
   app: 'popcorn-log';
   /** v2：新增 watchlist；导入侧同时接受 v1（无 watchlist 字段视为空） */
   backupVersion: 2;
+  /** 导出时的应用版本（package.json version） */
+  appVersion: string;
   exportedAt: string;
+  /** 格式自描述（各字段含义见文案本身；导入侧忽略） */
+  description: string;
   records: WatchRecord[];
   movies: MovieMeta[];
   watchlist: WatchlistItem[];
   settings: {
     members: string[];
     customLocations: string[];
+  };
+}
+
+/** 备份元数据（纯函数，spec 覆盖）：appVersion 与 description 让文件自描述，迁移时可脱离源码理解格式 */
+export function buildBackupMeta(): Pick<
+  BackupFile,
+  'app' | 'backupVersion' | 'appVersion' | 'exportedAt' | 'description'
+> {
+  return {
+    app: 'popcorn-log',
+    backupVersion: 2,
+    appVersion: __APP_VERSION__,
+    exportedAt: new Date().toISOString(),
+    description: BACKUP_DESCRIPTION,
   };
 }
 
@@ -32,9 +62,7 @@ export async function buildBackup(): Promise<BackupFile> {
     getAppSettings(),
   ]);
   return {
-    app: 'popcorn-log',
-    backupVersion: 2,
-    exportedAt: new Date().toISOString(),
+    ...buildBackupMeta(),
     records,
     movies,
     watchlist: [...watchlist].sort((a, b) => a.addedAt.localeCompare(b.addedAt)),

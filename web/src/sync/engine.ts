@@ -15,6 +15,13 @@ export interface SyncSummary {
   pushed: number;
   pulled: number;
   conflicts: number;
+  /** 本轮从远端并入本地的想看条数（同步排在最后，进度不可见时易误判为丢失） */
+  watchlistApplied: number;
+}
+
+/** 想看清单本轮有并入时给同步 toast 追加的片段（纯函数，spec 覆盖） */
+export function watchlistToastSuffix(summary: SyncSummary): string {
+  return summary.watchlistApplied > 0 ? ` · 想看 +${summary.watchlistApplied}` : '';
 }
 
 export function isSyncing(): boolean {
@@ -57,11 +64,11 @@ export async function runSync(): Promise<SyncSummary | null> {
   try {
     await migrateLegacyTombstones(); // 旧协议墓碑 → 物理删除意向，随本轮 push 清理
     const store = await getCloudStore();
-    const summary: SyncSummary = { pushed: 0, pulled: 0, conflicts: 0 };
+    const summary: SyncSummary = { pushed: 0, pulled: 0, conflicts: 0, watchlistApplied: 0 };
     await pullPhase(store, summary);
     await pushPhase(store, summary);
     await configPhase(store);
-    await watchlistPhase(store);
+    await watchlistPhase(store, summary);
     await saveAppSettings({ lastSyncedAt: new Date().toISOString() });
     return summary;
   } finally {
@@ -249,7 +256,7 @@ const EMPTY_CONFIG: CloudConfig = { members: [], customLocations: [] };
  * 本地有变化、或合并结果与云端不同 → 整文件上传（If-Match），412 重拉同基准再合并重试一次。
  * 403 = 旧版 Worker 尚未放行 watchlist.json：静默跳过本轮（本地数据无损，部署后自动恢复）。
  */
-async function watchlistPhase(store: CloudStore): Promise<void> {
+async function watchlistPhase(store: CloudStore, summary: SyncSummary): Promise<void> {
   const fetched = await fetchWatchlistFile(store);
   if (fetched === null) return; // 旧版 Worker 不认识该 key，等部署后下轮再试
 
@@ -262,6 +269,7 @@ async function watchlistPhase(store: CloudStore): Promise<void> {
   const remoteHasNew = !watchlistEquals(merged, local);
   if (remoteHasNew) {
     await applyWatchlist(merged);
+    summary.watchlistApplied = countRemoteArrived(local, merged);
   }
   const finalList = remoteHasNew ? merged : local;
 
@@ -290,6 +298,7 @@ async function watchlistPhase(store: CloudStore): Promise<void> {
     const retry = mergeWatchlist(finalList, freshRemote ?? [], base);
     if (!watchlistEquals(retry, finalList)) {
       await applyWatchlist(retry);
+      summary.watchlistApplied = countRemoteArrived(local, retry);
     }
     uploaded = retry;
     uploadedEtag = fresh.etag;
@@ -338,6 +347,12 @@ function watchlistEquals(a: WatchlistItem[], b: WatchlistItem[]): boolean {
       .sort()
       .join('\u0001');
   return signature(a) === signature(b);
+}
+
+/** 落库清单相对本地原清单新增的条目数（业务键维度；删除传播时为 0） */
+function countRemoteArrived(local: WatchlistItem[], applied: WatchlistItem[]): number {
+  const localKeys = new Set(local.map((item) => watchlistKey(item)));
+  return applied.filter((item) => !localKeys.has(watchlistKey(item))).length;
 }
 
 function configEquals(a: CloudConfig, b: CloudConfig): boolean {

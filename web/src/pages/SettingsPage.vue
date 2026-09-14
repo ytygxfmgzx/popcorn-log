@@ -10,6 +10,7 @@ import { getAppSettings } from '@/db/settings';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { useDuplicateGroups, useSyncStatus } from '@/composables/useSyncStatus';
 import { syncNow } from '@/sync/schedule';
+import { watchlistToastSuffix } from '@/sync/engine';
 import { LOCATION_EMOJI, type SyncMode } from '@/types';
 
 const router = useRouter();
@@ -139,9 +140,9 @@ async function syncImmediately(): Promise<void> {
       return;
     }
     if (summary.conflicts > 0) {
-      showToast(`同步完成，${summary.conflicts} 条冲突待处理`);
+      showToast(`同步完成，${summary.conflicts} 条冲突待处理${watchlistToastSuffix(summary)}`);
     } else {
-      showToast('同步完成 ✅');
+      showToast(`同步完成 ✅${watchlistToastSuffix(summary)}`);
     }
   } catch (error) {
     showToast(error instanceof Error ? error.message : '同步失败');

@@ -6,6 +6,7 @@ import { db } from '@/db/dexie';
 import { useLiveQuery } from '@/composables/useLiveQuery';
 import { useSyncStatus, useDuplicateGroups } from '@/composables/useSyncStatus';
 import { syncNow } from '@/sync/schedule';
+import { watchlistToastSuffix } from '@/sync/engine';
 import { buildViewingRanks } from '@/stats/viewings';
 import RecordCard from '@/components/RecordCard.vue';
 import EmptyState from '@/components/EmptyState.vue';
@@ -40,10 +41,12 @@ async function onIndicatorClick(): Promise<void> {
     const summary = await syncNow();
     if (!summary) return; // 未配置凭据 / 已在同步中，静默
     if (summary.conflicts > 0) {
-      showToast(`有 ${summary.conflicts} 条冲突待处理`);
+      showToast(`有 ${summary.conflicts} 条冲突待处理${watchlistToastSuffix(summary)}`);
       void router.push('/conflicts');
     } else {
-      showToast(summary.pushed + summary.pulled > 0 ? '同步完成 ✅' : '已是最新');
+      // 想看并入也算有变化（records 无变化但 watchlist 拉到新条目时不能误报「已是最新」）
+      const changed = summary.pushed + summary.pulled + summary.watchlistApplied;
+      showToast(changed > 0 ? `同步完成 ✅${watchlistToastSuffix(summary)}` : '已是最新');
     }
   } catch (error) {
     showToast(error instanceof Error ? error.message : '同步失败');
@@ -60,8 +63,12 @@ const refreshing = ref(false);
 async function onRefresh(): Promise<void> {
   try {
     const summary = await syncNow();
-    if (summary && summary.pushed + summary.pulled > 0) {
-      showToast(summary.conflicts > 0 ? `有 ${summary.conflicts} 条冲突待处理` : '已同步 ✅');
+    if (summary && summary.pushed + summary.pulled + summary.watchlistApplied > 0) {
+      showToast(
+        summary.conflicts > 0
+          ? `有 ${summary.conflicts} 条冲突待处理${watchlistToastSuffix(summary)}`
+          : `已同步 ✅${watchlistToastSuffix(summary)}`,
+      );
     }
   } catch (error) {
     showToast(error instanceof Error ? error.message : '同步失败');

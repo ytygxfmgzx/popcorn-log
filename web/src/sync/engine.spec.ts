@@ -1,6 +1,25 @@
 import { describe, expect, it } from 'vitest';
-import { decidePull, planPush } from './engine';
+import { decidePull, planPush, watchlistToastSuffix, type SyncSummary } from './engine';
 import type { SyncState, WatchRecord } from '@/types';
+
+describe('watchlistToastSuffix', () => {
+  const summary = (overrides: Partial<SyncSummary>): SyncSummary => ({
+    pushed: 0,
+    pulled: 0,
+    conflicts: 0,
+    watchlistApplied: 0,
+    ...overrides,
+  });
+
+  it('想看有并入 → 附加计数片段', () => {
+    expect(watchlistToastSuffix(summary({ watchlistApplied: 97 }))).toBe(' · 想看 +97');
+  });
+
+  it('无并入（含删除传播轮）→ 空片段', () => {
+    expect(watchlistToastSuffix(summary({}))).toBe('');
+    expect(watchlistToastSuffix(summary({ pushed: 3, pulled: 5 }))).toBe('');
+  });
+});
 
 describe('planPush', () => {
   const record = { watchedDate: '2026-09-09', id: 'r1' } as Pick<WatchRecord, 'watchedDate' | 'id'>;
