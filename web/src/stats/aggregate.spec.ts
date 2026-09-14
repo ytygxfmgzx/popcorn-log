@@ -245,3 +245,90 @@ describe('computeStats', () => {
     expect(stats.avgRating).toBeNull();
   });
 });
+
+describe('computeStats · 趣味洞察', () => {
+  // 2026-01-10 周六 / 02-15 周日 / 02-20 周五
+  const records = [
+    record('a', { watchedDate: '2026-01-10', tmdbId: 1, titleSnapshot: '老片A', members: ['爸爸'] }),
+    record('b', { watchedDate: '2026-01-10', tmdbId: 2, titleSnapshot: '新片B', members: ['爸爸'] }), // 同日两场
+    record('c', { watchedDate: '2026-02-15', tmdbId: 1, titleSnapshot: '老片A', members: ['妈妈'] }), // 重温
+    record('d', { watchedDate: '2026-02-20', tmdbId: 3, mediaType: 'tv', titleSnapshot: '剧集D' }),
+  ];
+  const movies = [meta('movie:1', { releaseYear: 2000 }), meta('movie:2', { releaseYear: 2025 })];
+
+  it('星期分布：固定 7 项（周一为始），周六 2 / 周日 1 / 周五 1', () => {
+    const stats = computeStats(records, movies, noFilter, [], TODAY);
+    expect(stats.weekdayDist).toHaveLength(7);
+    expect(stats.weekdayDist[0]).toEqual({ name: '周一', count: 0 });
+    expect(stats.weekdayDist[5]).toEqual({ name: '周六', count: 2 });
+    expect(stats.weekdayDist[6]).toEqual({ name: '周日', count: 1 });
+    expect(stats.weekdayDist[4]).toEqual({ name: '周五', count: 1 });
+  });
+
+  it('电影 vs 剧集场次', () => {
+    const stats = computeStats(records, movies, noFilter, [], TODAY);
+    expect(stats.mediaDist).toEqual({ movie: 3, tv: 1 });
+  });
+
+  it('年代：老片占比（满 10 年）+ 最老/最新；无元数据不计入', () => {
+    const stats = computeStats(records, movies, noFilter, [], TODAY);
+    expect(stats.eraStat.total).toBe(3); // d 无元数据不计
+    expect(stats.eraStat.retroCount).toBe(2); // movie:1 两场（2000 ≤ 2016）
+    expect(stats.eraStat.oldest).toEqual({ year: 2000, title: '片名' });
+    expect(stats.eraStat.newest).toEqual({ year: 2025, title: '片名' });
+  });
+
+  it('最长连击：1 月 + 2 月 = 连续 2 个月', () => {
+    const stats = computeStats(records, movies, noFilter, [], TODAY);
+    expect(stats.streakMonths).toBe(2);
+  });
+
+  it('最长连击：断月重新计数', () => {
+    const gapped = [
+      record('a1', { watchedDate: '2025-11-02' }),
+      record('a2', { watchedDate: '2025-12-20' }),
+      record('a3', { watchedDate: '2026-02-05' }), // 1 月空
+    ];
+    const stats = computeStats(gapped, [], noFilter, [], TODAY);
+    expect(stats.streakMonths).toBe(2);
+  });
+
+  it('最长空窗：01-10 → 02-15 隔 36 天，回归片 = c', () => {
+    const stats = computeStats(records, movies, noFilter, [], TODAY);
+    expect(stats.longestGap).toEqual({ days: 36, comebackTitle: '老片A', comebackDate: '2026-02-15' });
+  });
+
+  it('最长空窗：不足两场为 null', () => {
+    const stats = computeStats([record('x')], [], noFilter, [], TODAY);
+    expect(stats.longestGap).toBeNull();
+  });
+
+  it('重温榜：同片 ≥2 次，次数降序、并列按最近观看日期，取片名快照', () => {
+    const more = [
+      ...records,
+      record('e', { watchedDate: '2026-03-01', tmdbId: 2, titleSnapshot: '新片B' }), // movie:2 也 ×2
+      record('f', { watchedDate: '2026-03-02', tmdbId: 1, titleSnapshot: '老片A' }), // movie:1 ×3 → 榜首
+    ];
+    const stats = computeStats(more, movies, noFilter, [], TODAY);
+    expect(stats.rewatchBoard).toEqual([
+      { mediaType: 'movie', tmdbId: 1, title: '老片A', count: 3, lastWatched: '2026-03-02' },
+      { mediaType: 'movie', tmdbId: 2, title: '新片B', count: 2, lastWatched: '2026-03-01' },
+    ]);
+  });
+
+  it('影片筛选：movie:1 只剩 a、c 两场', () => {
+    const stats = computeStats(
+      records,
+      movies,
+      { ...noFilter, movie: { mediaType: 'movie', tmdbId: 1, title: '老片A' } },
+      [],
+      TODAY,
+    );
+    expect(stats.viewings).toBe(2);
+    expect(stats.rewatchBoard).toHaveLength(1); // 洗掉 movie:2 后单次的不再成榜
+    expect(filterRecords(records, movies, {
+      ...noFilter,
+      movie: { mediaType: 'tv', tmdbId: 3, title: '剧集D' },
+    }, TODAY).map((r) => r.id)).toEqual(['d']); // tv:3 精确命中（mediaType 参与匹配）
+  });
+});

@@ -7,7 +7,7 @@ import { buildViewingRanks } from '@/stats/viewings';
 import { filterRecords } from '@/stats/aggregate';
 import StatsFilterBar from '@/components/StatsFilterBar.vue';
 import { statsFilter, filterToQuery, queryToFilter, applyStatsFilter } from '@/stats/filter-state';
-import { todayStr } from '@/utils/date';
+import { formatDateFull, todayStr } from '@/utils/date';
 import RecordCard from '@/components/RecordCard.vue';
 import type { WatchRecord } from '@/types';
 
@@ -34,6 +34,8 @@ function snapshotTitle(): string {
   const person = typeof route.query.person === 'string' ? route.query.person : '';
   const personKind =
     route.query.personType === 'director' ? '导演' : route.query.personType === 'cast' ? '演员' : '';
+  const movieTitle = typeof route.query.movieTitle === 'string' ? route.query.movieTitle : '';
+  const date = typeof route.query.date === 'string' ? route.query.date : '';
   const kind = member
     ? '成员'
     : location
@@ -42,9 +44,13 @@ function snapshotTitle(): string {
         ? '类型'
         : person
           ? personKind
-          : '记录';
-  const value = member || location || genre || person || '';
-  return value ? `${kind} · ${value}` : '记录明细';
+          : movieTitle
+            ? '影片'
+            : '记录';
+  const value = member || location || genre || person || movieTitle || '';
+  if (value) return `${kind} · ${value}`;
+  if (date) return `那天 · ${formatDateFull(date)}`;
+  return '记录明细';
 }
 const title = snapshotTitle();
 

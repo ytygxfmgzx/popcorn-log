@@ -37,6 +37,12 @@ describe('filterToQuery', () => {
     });
   });
 
+  it('影片筛选序列化为 movie=mediaType:tmdbId + 标题快照', () => {
+    expect(
+      filterToQuery(filter({ movie: { mediaType: 'tv', tmdbId: 123, title: '剧集X' } })),
+    ).toEqual({ range: 'all', movie: 'tv:123', movieTitle: '剧集X' });
+  });
+
   it('空筛选只带 range', () => {
     expect(filterToQuery(filter({}))).toEqual({ range: 'all' });
   });
@@ -60,8 +66,19 @@ describe('queryToFilter', () => {
       locations: ['家里', '影院'],
       genres: ['动画'],
       person: { name: '宫崎骏', type: 'director' },
+      movie: { mediaType: 'movie', tmdbId: 42, title: '电影Y' },
     });
     expect(queryToFilter(filterToQuery(source))).toEqual(source);
+  });
+
+  it('影片筛选往返（tv 前缀 + 脏值回退 undefined）', () => {
+    expect(queryToFilter({ range: 'all', movie: 'tv:123', movieTitle: '剧集X' })?.movie).toEqual({
+      mediaType: 'tv',
+      tmdbId: 123,
+      title: '剧集X',
+    });
+    expect(queryToFilter({ range: 'all', movie: 'abc' })?.movie).toBeUndefined();
+    expect(queryToFilter({ range: 'all', movie: 'movie:NaN' })?.movie).toBeUndefined();
   });
 
   it('旧版单值 key 回退（?member=妈妈 → [妈妈]）', () => {

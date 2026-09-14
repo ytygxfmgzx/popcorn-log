@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import { computed, defineComponent, h, onMounted } from 'vue';
+import { computed, defineComponent, h, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { db } from '@/db/dexie';
 import { useLiveQuery } from '@/composables/useLiveQuery';
 import { useAppSettings } from '@/composables/useAppSettings';
 import StatsFilterBar from '@/components/StatsFilterBar.vue';
 import { statsFilter, filterToQuery } from '@/stats/filter-state';
-import { computeStats, type StatsFilter } from '@/stats/aggregate';
-import { todayStr } from '@/utils/date';
+import { computeStats, type RewatchItem, type StatsFilter } from '@/stats/aggregate';
+import { computeCalendarYear, type CalendarDay } from '@/stats/calendar';
+import { formatDateShort, todayStr } from '@/utils/date';
 import { LOCATION_EMOJI } from '@/types';
 
 /** 无记录空态（局部小组件，避免占用 components 目录） */
@@ -27,9 +28,10 @@ const { data: records } = useLiveQuery(() => db.records.toArray(), []);
 const { data: movies } = useLiveQuery(() => db.movies.toArray(), []);
 
 /* ---------- 筛选状态：filter-state 单例（StatsFilterBar 读写，与明细页共享） ---------- */
-// 统计页不支持主创筛选；从明细页返回时清掉残留，避免图表被带上 person 条件
+// 统计页不支持主创/影片筛选；从明细页返回时清掉残留，避免图表被带上 person/movie 条件
 onMounted(() => {
   statsFilter.person = undefined;
+  statsFilter.movie = undefined;
 });
 
 /* ---------- 聚合 ---------- */
@@ -130,6 +132,116 @@ function rankBadge(index: number): string {
   return MEDALS[index] ?? String(index + 1);
 }
 
+/* ---------- 观影日历（条件筛选生效、时间窗不裁剪；自带年份维度） ---------- */
+const CAL_CELL = 11;
+const CAL_GAP = 2;
+const thisYear = Number(today.slice(0, 4));
+const calScrollRef = ref<HTMLElement | null>(null);
+
+const earliestYear = computed(() => {
+  let earliest = thisYear;
+  for (const record of records.value) {
+    if (record.deleted) continue;
+    const year = Number(record.watchedDate.slice(0, 4));
+    if (year < earliest) earliest = year;
+  }
+  return earliest;
+});
+
+const calYear = ref(thisYear);
+const calendar = computed(() =>
+  computeCalendarYear(records.value, movies.value, statsFilter, calYear.value, today),
+);
+
+/** 月份标签：每月 1 号所在列（列宽 = 格子 11 + 间隔 2） */
+const calMonthMarks = computed(() => {
+  const marks: { label: string; col: number }[] = [];
+  calendar.value.weeks.forEach((week, col) => {
+    const first = week.find((day) => day.inYear && day.date.endsWith('-01'));
+    if (first) marks.push({ label: `${Number(first.date.slice(5, 7))}月`, col });
+  });
+  return marks;
+});
+
+function calHeatClass(day: CalendarDay): string[] {
+  const level = day.count === 0 ? 0 : day.count === 1 ? 1 : day.count === 2 ? 2 : 3;
+  const classes = [`cal-${level}`];
+  if (!day.inYear) classes.push('out');
+  if (day.future) classes.push('future');
+  return classes;
+}
+
+// 年份切换/数据就绪后滚动定位：今年滚到今天所在列，往年回到开头
+// （监听 calendar：首屏 liveQuery 异步到数后也要重新定位）
+watch(
+  [calYear, calendar],
+  () => {
+    const el = calScrollRef.value;
+    if (!el) return;
+    if (calYear.value !== thisYear) {
+      el.scrollLeft = 0;
+      return;
+    }
+    const col = calendar.value.weeks.findIndex((week) => week.some((day) => day.date >= today));
+    if (col >= 0) el.scrollLeft = Math.max(0, col * (CAL_CELL + CAL_GAP) - el.clientWidth / 2);
+  },
+  { immediate: true, flush: 'post' },
+);
+
+/* ---------- 观影习惯（星期偏好 / 影剧比 / 新老片） ---------- */
+const weekdayMax = computed(() => Math.max(...stats.value.weekdayDist.map((w) => w.count), 1));
+
+/** 唯一最高才点名（并列第一就不猜了） */
+const weekdayTop = computed(() => {
+  const dist = stats.value.weekdayDist;
+  const max = Math.max(...dist.map((w) => w.count));
+  if (!max) return null;
+  const ties = dist.filter((w) => w.count === max);
+  return ties.length === 1 ? ties[0] : null;
+});
+
+const mediaTotal = computed(() => stats.value.mediaDist.movie + stats.value.mediaDist.tv);
+const moviePct = computed(() =>
+  mediaTotal.value ? `${(stats.value.mediaDist.movie / mediaTotal.value) * 100}%` : '0%',
+);
+const tvPct = computed(() =>
+  mediaTotal.value ? `${(stats.value.mediaDist.tv / mediaTotal.value) * 100}%` : '0%',
+);
+
+const retroLabel = computed(() => {
+  const { retroCount, total } = stats.value.eraStat;
+  if (!total) return '';
+  return `${Math.round((retroCount / total) * 100)}% 是老片`;
+});
+
+function wdBarHeight(count: number): string {
+  if (!count) return '3px';
+  return `${Math.max(12, Math.round((count / weekdayMax.value) * 56))}px`;
+}
+
+/* ---------- 小纪录（连击 / 空窗 / 年代跨度；够有意思才显示） ---------- */
+const recordLines = computed(() => {
+  const lines: string[] = [];
+  const { streakMonths, longestGap, eraStat } = stats.value;
+  if (streakMonths >= 2) lines.push(`🔥 最长连续 ${streakMonths} 个月，每月都看`);
+  if (longestGap && longestGap.days >= 7) {
+    const comeback = longestGap.comebackTitle
+      ? `，回来第一部是《${longestGap.comebackTitle}》`
+      : '';
+    lines.push(`⏳ 最长隔了 ${longestGap.days} 天没看${comeback}`);
+  }
+  if (eraStat.oldest && eraStat.newest && eraStat.oldest.year !== eraStat.newest.year) {
+    lines.push(
+      `🎞️ 跨度 ${eraStat.newest.year - eraStat.oldest.year} 年：最老《${eraStat.oldest.title}》(${eraStat.oldest.year}) · 最新《${eraStat.newest.title}》(${eraStat.newest.year})`,
+    );
+  }
+  return lines;
+});
+
+function fmtWatched(date: string): string {
+  return formatDateShort(date, today);
+}
+
 /**
  * 分布榜条目 → 明细列表：携带统计页完整筛选（时间窗 + 成员/地点/类型），
  * 保证明细条数与卡片数字一致。被点击维度按榜单口径合并：
@@ -151,6 +263,28 @@ function openDetail(
   if (kind === 'member') query.member = value;
   if (kind === 'location') query.location = value;
   if (kind === 'genre') query.genre = value;
+  void router.push({ path: '/stats/list', query });
+}
+
+/** 重温榜条目 → 该片全部场次（movie 筛选随 filterToQuery 序列化，标题用 movieTitle 快照） */
+function openMovieDetail(item: RewatchItem): void {
+  const next: StatsFilter = {
+    ...statsFilter,
+    movie: { mediaType: item.mediaType, tmdbId: item.tmdbId, title: item.title },
+  };
+  void router.push({ path: '/stats/list', query: filterToQuery(next) });
+}
+
+/** 日历格子 → 那天的明细（时间窗锁定当天，条件筛选保留） */
+function openDateDetail(date: string): void {
+  const next: StatsFilter = {
+    ...statsFilter,
+    range: 'custom',
+    customStart: date,
+    customEnd: date,
+  };
+  const query: Record<string, string | string[]> = filterToQuery(next);
+  query.date = date; // 单值 key：明细页标题快照
   void router.push({ path: '/stats/list', query });
 }
 </script>
@@ -231,6 +365,57 @@ function openDetail(
           </svg>
         </div>
 
+        <!-- 观影日历：一年格子墙，点亮一起看片的日子（条件筛选生效、时间窗不裁剪） -->
+        <div class="card block">
+          <h3 class="block-title cal-title">
+            观影日历 <i class="title-note">{{ calendar.total }} 场</i>
+            <span class="cal-navs">
+              <button class="cal-nav" :disabled="calYear <= earliestYear" @click="calYear--">‹</button>
+              <b>{{ calYear }}</b>
+              <button class="cal-nav" :disabled="calYear >= thisYear" @click="calYear++">›</button>
+            </span>
+          </h3>
+          <div class="cal-wrap">
+            <div class="cal-wd" aria-hidden="true">
+              <span>一</span><i></i><span>三</span><i></i><span>五</span><i></i><i></i>
+            </div>
+            <div ref="calScrollRef" class="cal-scroll">
+              <div class="cal-inner">
+                <div class="cal-months">
+                  <span
+                    v-for="mark in calMonthMarks"
+                    :key="mark.label"
+                    class="cal-month"
+                    :style="{ left: `${mark.col * (CAL_CELL + CAL_GAP)}px` }"
+                  >
+                    {{ mark.label }}
+                  </span>
+                </div>
+                <div class="cal-grid">
+                  <div v-for="(week, col) in calendar.weeks" :key="col" class="cal-col">
+                    <span
+                      v-for="day in week"
+                      :key="day.date"
+                      class="cal-cell"
+                      :class="calHeatClass(day)"
+                      :title="`${day.date}${day.count ? ` · ${day.count} 场` : ''}`"
+                      @click="day.count && !day.future && openDateDetail(day.date)"
+                    ></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="cal-legend" aria-hidden="true">
+            <i>少</i>
+            <span class="cal-cell cal-0 demo"></span>
+            <span class="cal-cell cal-1 demo"></span>
+            <span class="cal-cell cal-2 demo"></span>
+            <span class="cal-cell cal-3 demo"></span>
+            <i>多</i>
+          </div>
+        </div>
+
         <!-- 成员参与榜：胶囊按钮流（点击看明细） -->
         <div v-if="stats.memberBoard.length" class="card block">
           <h3 class="block-title">一起看 · 参与榜</h3>
@@ -291,6 +476,35 @@ function openDetail(
           </div>
         </div>
 
+        <!-- 观影习惯：星期偏好 + 电影/剧集 + 新老片 -->
+        <div v-if="mediaTotal" class="card block">
+          <h3 class="block-title">观影习惯</h3>
+          <div class="wd-chart">
+            <div
+              v-for="(item, index) in stats.weekdayDist"
+              :key="item.name"
+              class="wd-col"
+            >
+              <span class="wd-num" :class="{ off: !item.count }">{{ item.count || '0' }}</span>
+              <span
+                class="wd-bar"
+                :class="{ on: item.count, weekend: index >= 5 }"
+                :style="{ height: wdBarHeight(item.count) }"
+              ></span>
+              <span class="wd-label">{{ item.name.slice(1) }}</span>
+            </div>
+          </div>
+          <p v-if="weekdayTop" class="habit-line">🕘 最爱在{{ weekdayTop.name }}看 · ×{{ weekdayTop.count }}</p>
+          <div class="media-row">
+            <div class="ratio-bar">
+              <span class="bar-movie" :style="{ width: moviePct }"></span>
+              <span class="bar-tv" :style="{ width: tvPct }"></span>
+            </div>
+            <span class="media-label">🎬 {{ stats.mediaDist.movie }} · 📺 {{ stats.mediaDist.tv }}</span>
+          </div>
+          <p v-if="retroLabel" class="habit-line">🕰 {{ retroLabel }}（上映满 10 年）</p>
+        </div>
+
         <!-- 常看主创：演员/导演 TOP（去重影片数，点击看明细） -->
         <div v-if="castTop.length || directorTop.length" class="card block">
           <h3 class="block-title">
@@ -322,6 +536,27 @@ function openDetail(
               <span class="rank-count">{{ item.count }} 部 ›</span>
             </div>
           </template>
+        </div>
+
+        <!-- 重温榜：看过 ≥2 次的真爱（点击看该片全部场次） -->
+        <div v-if="stats.rewatchBoard.length" class="card block">
+          <h3 class="block-title">重温榜 <i class="title-note">看过两次以上的真爱</i></h3>
+          <div
+            v-for="(item, index) in stats.rewatchBoard"
+            :key="`${item.mediaType}:${item.tmdbId}`"
+            class="rank-row"
+            @click="openMovieDetail(item)"
+          >
+            <span class="rank-badge">{{ rankBadge(index) }}</span>
+            <span class="rank-name">{{ item.title }}</span>
+            <span class="rank-count">×{{ item.count }} · {{ fmtWatched(item.lastWatched) }} ›</span>
+          </div>
+        </div>
+
+        <!-- 小纪录：连击 / 空窗 / 年代跨度（够有意思才出现） -->
+        <div v-if="recordLines.length" class="card block">
+          <h3 class="block-title">小纪录</h3>
+          <p v-for="(line, index) in recordLines" :key="index" class="record-line">{{ line }}</p>
         </div>
       </template>
     </main>
@@ -622,6 +857,261 @@ function openDetail(
   flex: none;
   font-size: var(--t-12);
   color: var(--c-text-3);
+}
+
+/* 观影日历 · GitHub 风格格子墙（横向滚动，周列对齐） */
+.cal-title {
+  display: flex;
+  align-items: center;
+}
+
+.cal-navs {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.cal-navs b {
+  font-size: var(--t-13);
+  font-weight: 600;
+  color: var(--c-text);
+  min-width: 34px;
+  text-align: center;
+}
+
+.cal-nav {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 8px;
+  background: var(--c-bg);
+  color: var(--c-text-2);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.cal-nav:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.cal-nav:not(:disabled):active {
+  opacity: 0.75;
+}
+
+.cal-wrap {
+  display: flex;
+  gap: 4px;
+}
+
+.cal-wd {
+  flex: none;
+  width: 12px;
+  display: grid;
+  grid-template-rows: repeat(7, 11px);
+  gap: 2px;
+  padding-top: 18px;
+}
+
+.cal-wd span {
+  font-size: 9px;
+  color: var(--c-text-3);
+  line-height: 11px;
+}
+
+.cal-scroll {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.cal-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.cal-inner {
+  display: inline-block;
+  min-width: 100%;
+  padding-right: 2px;
+}
+
+.cal-months {
+  position: relative;
+  height: 16px;
+  margin-bottom: 2px;
+}
+
+.cal-month {
+  position: absolute;
+  top: 3px;
+  font-size: 9px;
+  color: var(--c-text-3);
+}
+
+.cal-grid {
+  display: flex;
+  gap: 2px;
+}
+
+.cal-col {
+  display: grid;
+  grid-template-rows: repeat(7, 11px);
+  gap: 2px;
+}
+
+.cal-cell {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  background: var(--c-bg);
+}
+
+.cal-cell.cal-1 {
+  background: var(--c-primary-weak);
+}
+
+.cal-cell.cal-2 {
+  background: var(--c-primary);
+}
+
+.cal-cell.cal-3 {
+  background: var(--c-primary-active);
+}
+
+.cal-cell.out {
+  opacity: 0.3;
+}
+
+.cal-cell.future {
+  opacity: 0.35;
+}
+
+.cal-cell:not(.cal-0) {
+  cursor: pointer;
+}
+
+.cal-cell:not(.cal-0):active {
+  transform: scale(0.85);
+}
+
+.cal-legend {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  margin-top: 10px;
+  font-size: 10px;
+  font-style: normal;
+  color: var(--c-text-3);
+}
+
+.cal-legend .demo {
+  width: 9px;
+  height: 9px;
+}
+
+/* 观影习惯 · 星期柱状 / 影剧比例条 */
+.wd-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  height: 82px;
+  padding: 0 2px;
+}
+
+.wd-col {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+}
+
+.wd-num {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--c-primary-active);
+  line-height: 1;
+  min-height: 10px;
+}
+
+.wd-num.off {
+  visibility: hidden;
+}
+
+.wd-bar {
+  width: 100%;
+  max-width: 26px;
+  border-radius: 4px 4px 2px 2px;
+  background: var(--c-bg);
+}
+
+.wd-bar.on {
+  background: var(--c-primary-weak);
+}
+
+.wd-bar.on.weekend {
+  background: var(--c-primary);
+}
+
+.wd-label {
+  font-size: 10px;
+  color: var(--c-text-3);
+}
+
+.habit-line {
+  font-size: var(--t-13);
+  color: var(--c-text-2);
+  margin-top: 10px;
+}
+
+.media-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.ratio-bar {
+  flex: 1;
+  display: flex;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--c-bg);
+}
+
+.bar-movie {
+  background: var(--c-primary);
+}
+
+.bar-tv {
+  background: var(--chart-2);
+}
+
+.media-label {
+  flex: none;
+  font-size: var(--t-12);
+  color: var(--c-text-3);
+  white-space: nowrap;
+}
+
+/* 小纪录 · 趣味文案行 */
+.record-line {
+  font-size: var(--t-14);
+  color: var(--c-text-2);
+  line-height: 1.7;
+  margin-top: 6px;
+}
+
+.record-line:first-of-type {
+  margin-top: 0;
 }
 
 .empty {

@@ -1,4 +1,5 @@
-import type { MovieMeta, WatchRecord } from '@/types';
+import type { MediaType, MovieMeta, WatchRecord } from '@/types';
+import { diffDays } from '@/utils/date';
 
 /**
  * 统计聚合纯函数：本地内存计算（毫秒级、零网络、离线可用）。
@@ -20,6 +21,8 @@ export interface StatsFilter {
   genres: string[];
   /** 演员/导演单选（榜单点击反查明细用） */
   person?: { name: string; type: 'cast' | 'director' };
+  /** 影片单选（重温榜点击反查该片全部场次用） */
+  movie?: { mediaType: MediaType; tmdbId: number; title: string };
 }
 
 export interface NamedCount {
@@ -65,6 +68,28 @@ export interface StatsResult {
   castBoard: NamedCount[];
   /** 导演榜（去重影片数） */
   directorBoard: NamedCount[];
+  /** 星期分布（周一~周日固定 7 项，count 可为 0） */
+  weekdayDist: NamedCount[];
+  /** 电影 vs 剧集场次 */
+  mediaDist: { movie: number; tv: number };
+  /** 上映年代：老片 = 上映满 10 年；无元数据场次不计入 total */
+  eraStat: { retroCount: number; total: number; oldest?: { year: number; title: string }; newest?: { year: number; title: string } };
+  /** 最长连续自然月（每月都看） */
+  streakMonths: number;
+  /** 最长空窗：相邻两场观影的最大间隔天数 + 空窗后回归的那部片（<2 场为 null） */
+  longestGap: { days: number; comebackTitle?: string; comebackDate?: string } | null;
+  /** 重温榜：看过 ≥2 次的影片，按次数降序、并列按最近观看日期（同一部取最近一场的片名快照） */
+  rewatchBoard: RewatchItem[];
+}
+
+/** 重温榜条目 */
+export interface RewatchItem {
+  mediaType: MediaType;
+  tmdbId: number;
+  title: string;
+  count: number;
+  /** 最近一次观看日期（YYYY-MM-DD） */
+  lastWatched: string;
 }
 
 /** 时间窗起点（YYYY-MM-DD）；all/custom 由调用方处理 */
@@ -100,12 +125,18 @@ function inTimeWindow(record: WatchRecord, filter: StatsFilter, today: string): 
   return record.watchedDate >= rangeStartDate(filter.range, today);
 }
 
-/** 条件过滤（成员/地点/类型/人物；时间窗另算，供趋势复用） */
-function matchesConditions(record: WatchRecord, metaByKey: Map<string, MovieMeta>, filter: StatsFilter): boolean {
+/**
+ * 条件过滤（成员/地点/类型/人物/影片；时间窗另算）。
+ * 导出供日历热力图（calendar.ts）复用——与趋势同口径：条件生效、时间窗不裁剪。
+ */
+export function matchesConditions(record: WatchRecord, metaByKey: Map<string, MovieMeta>, filter: StatsFilter): boolean {
   if (filter.members.length && !filter.members.every((m) => record.members.includes(m))) {
     return false;
   }
   if (filter.locations.length && !filter.locations.includes(record.location)) return false;
+  if (filter.movie && !(record.mediaType === filter.movie.mediaType && record.tmdbId === filter.movie.tmdbId)) {
+    return false;
+  }
   const meta = metaByKey.get(`${record.mediaType}:${record.tmdbId}`);
   if (filter.genres.length) {
     if (!filter.genres.some((genre) => (meta?.genres ?? []).includes(genre))) return false;
@@ -202,6 +233,15 @@ export function computeStats(
     locationDist,
     castBoard: sortedCounts(castCounts),
     directorBoard: sortedCounts(directorCounts),
+    weekdayDist: computeWeekdayDist(filtered),
+    mediaDist: {
+      movie: filtered.filter((r) => r.mediaType === 'movie').length,
+      tv: filtered.filter((r) => r.mediaType === 'tv').length,
+    },
+    eraStat: computeEraStat(filtered, metaByKey, today),
+    streakMonths: computeStreakMonths(filtered),
+    longestGap: computeLongestGap(filtered),
+    rewatchBoard: buildRewatchBoard(filtered),
   };
 }
 
@@ -231,13 +271,15 @@ function trendGranularity(filter: StatsFilter): TrendGranularity {
   return months <= 24 ? 'month' : 'year';
 }
 
-function mondayOf(dateStr: string): string {
+/** 日期串所在周的周一（导出供日历热力图复用周对齐口径） */
+export function mondayOf(dateStr: string): string {
   const d = new Date(`${dateStr}T00:00:00`);
   d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
   return toLocalDate(d);
 }
 
-function addDays(dateStr: string, days: number): string {
+/** 日期串 + N 天（导出供日历热力图铺格子用） */
+export function addDays(dateStr: string, days: number): string {
   const d = new Date(`${dateStr}T00:00:00`);
   d.setDate(d.getDate() + days);
   return toLocalDate(d);
@@ -355,4 +397,108 @@ function countBy(items: string[]): NamedCount[] {
     counts.set(item, (counts.get(item) ?? 0) + 1);
   }
   return sortedCounts(counts);
+}
+
+/* ---------------- 趣味洞察 ---------------- */
+
+const WEEKDAY_NAMES = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+
+/** 星期分布：周一~周日固定 7 项（count 可为 0，供柱状图完整绘制） */
+function computeWeekdayDist(records: WatchRecord[]): NamedCount[] {
+  const counts = new Array(7).fill(0) as number[];
+  for (const record of records) {
+    const day = new Date(`${record.watchedDate}T00:00:00`).getDay(); // 0 = 周日
+    counts[(day + 6) % 7] += 1;
+  }
+  return WEEKDAY_NAMES.map((name, index) => ({ name, count: counts[index] }));
+}
+
+/** 上映年代：老片占比（满 10 年）+ 最老/最新（无元数据场次不计） */
+function computeEraStat(
+  records: WatchRecord[],
+  metaByKey: Map<string, MovieMeta>,
+  today: string,
+): StatsResult['eraStat'] {
+  const retroLine = Number(today.slice(0, 4)) - 10;
+  let total = 0;
+  let retroCount = 0;
+  let oldest: { year: number; title: string } | undefined;
+  let newest: { year: number; title: string } | undefined;
+  for (const record of records) {
+    const meta = metaByKey.get(`${record.mediaType}:${record.tmdbId}`);
+    const year = meta?.releaseYear;
+    if (!year) continue;
+    total += 1;
+    if (year <= retroLine) retroCount += 1;
+    if (!oldest || year < oldest.year) oldest = { year, title: meta.title };
+    if (!newest || year > newest.year) newest = { year, title: meta.title };
+  }
+  return { retroCount, total, oldest, newest };
+}
+
+/** 最长连续自然月（每月都有观影） */
+function computeStreakMonths(records: WatchRecord[]): number {
+  const months = new Set(records.map((r) => r.watchedDate.slice(0, 7)));
+  if (!months.size) return 0;
+  const sorted = [...months].sort();
+  const monthIndex = (month: string) => {
+    const [y, m] = month.split('-').map(Number);
+    return y * 12 + m;
+  };
+  let best = 1;
+  let run = 1;
+  for (let i = 1; i < sorted.length; i++) {
+    run = monthIndex(sorted[i]) === monthIndex(sorted[i - 1]) + 1 ? run + 1 : 1;
+    best = Math.max(best, run);
+  }
+  return best;
+}
+
+/** 最长空窗：相邻两场的最大间隔天数，带上空窗结束后回看的第一部片 */
+function computeLongestGap(records: WatchRecord[]): StatsResult['longestGap'] {
+  if (records.length < 2) return null;
+  const sorted = [...records].sort((a, b) => a.watchedDate.localeCompare(b.watchedDate));
+  let bestDays = 0;
+  let comeback: WatchRecord | undefined;
+  for (let i = 1; i < sorted.length; i++) {
+    const days = diffDays(sorted[i].watchedDate, sorted[i - 1].watchedDate);
+    if (days > bestDays) {
+      bestDays = days;
+      comeback = sorted[i];
+    }
+  }
+  if (!comeback) return null;
+  return {
+    days: bestDays,
+    comebackTitle: comeback.titleSnapshot,
+    comebackDate: comeback.watchedDate,
+  };
+}
+
+/** 重温榜：同片 ≥2 次的影片，次数降序、并列按最近观看日期降序，TOP5 */
+function buildRewatchBoard(records: WatchRecord[]): RewatchItem[] {
+  const groups = new Map<string, RewatchItem>();
+  for (const record of records) {
+    const key = `${record.mediaType}:${record.tmdbId}`;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.count += 1;
+      if (record.watchedDate > existing.lastWatched) {
+        existing.lastWatched = record.watchedDate;
+        existing.title = record.titleSnapshot;
+      }
+    } else {
+      groups.set(key, {
+        mediaType: record.mediaType,
+        tmdbId: record.tmdbId,
+        title: record.titleSnapshot,
+        count: 1,
+        lastWatched: record.watchedDate,
+      });
+    }
+  }
+  return [...groups.values()]
+    .filter((item) => item.count >= 2)
+    .sort((a, b) => b.count - a.count || b.lastWatched.localeCompare(a.lastWatched))
+    .slice(0, 5);
 }

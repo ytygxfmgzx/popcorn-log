@@ -63,7 +63,7 @@ function toggleGenre(genre: string): void {
 const activeFilterCount = computed(
   () =>
     statsFilter.members.length + statsFilter.locations.length + statsFilter.genres.length +
-    (statsFilter.person ? 1 : 0),
+    (statsFilter.person ? 1 : 0) + (statsFilter.movie ? 1 : 0),
 );
 
 const filterTitle = computed(() =>
@@ -100,6 +100,16 @@ const conditionChips = computed(() => {
       label: `${person.type === 'director' ? '导演' : '演员'} · ${person.name}`,
       remove: () => {
         statsFilter.person = undefined;
+      },
+    });
+  }
+  if (statsFilter.movie) {
+    const movie = statsFilter.movie;
+    chips.push({
+      key: `mv-${movie.mediaType}-${movie.tmdbId}`,
+      label: `🎞 ${movie.title || '影片'}`,
+      remove: () => {
+        statsFilter.movie = undefined;
       },
     });
   }

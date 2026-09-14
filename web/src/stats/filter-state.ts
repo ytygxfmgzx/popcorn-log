@@ -17,6 +17,7 @@ export function resetStatsFilter(): void {
   statsFilter.locations = [];
   statsFilter.genres = [];
   statsFilter.person = undefined;
+  statsFilter.movie = undefined;
 }
 
 /** 筛选状态 → URL query（多选维度序列化为重复 key：?members=a&members=b） */
@@ -28,6 +29,10 @@ export function filterToQuery(filter: StatsFilter = statsFilter): Record<string,
   if (filter.person) {
     query.person = filter.person.name;
     query.personType = filter.person.type;
+  }
+  if (filter.movie) {
+    query.movie = `${filter.movie.mediaType}:${filter.movie.tmdbId}`;
+    query.movieTitle = filter.movie.title; // 标题快照（明细页标题用）
   }
   if (filter.range === 'custom') {
     query.start = filter.customStart ?? '';
@@ -51,6 +56,7 @@ const FILTER_KEYS = [
   'locations',
   'genres',
   'person',
+  'movie',
   // 旧版单值 key（明细页标题用），兼容回退
   'member',
   'location',
@@ -72,6 +78,16 @@ export function queryToFilter(query: Record<string, unknown>): StatsFilter | nul
     query.personType === 'director' || query.personType === 'cast'
       ? (query.personType as 'cast' | 'director')
       : 'cast';
+  // ?movie=movie:123&movieTitle=标题（重温榜点击反查）
+  const movieParts = single('movie').split(':');
+  const movie =
+    (movieParts[0] === 'movie' || movieParts[0] === 'tv') && /^\d+$/.test(movieParts[1] ?? '')
+      ? {
+          mediaType: movieParts[0] as 'movie' | 'tv',
+          tmdbId: Number(movieParts[1]),
+          title: single('movieTitle'),
+        }
+      : undefined;
 
   return {
     range,
@@ -82,6 +98,7 @@ export function queryToFilter(query: Record<string, unknown>): StatsFilter | nul
     locations: locations.length ? locations : single('location') ? [single('location')] : [],
     genres: genres.length ? genres : single('genre') ? [single('genre')] : [],
     person: personName ? { name: personName, type: personType } : undefined,
+    movie,
   };
 }
 
@@ -94,4 +111,5 @@ export function applyStatsFilter(next: StatsFilter): void {
   statsFilter.locations = [...next.locations];
   statsFilter.genres = [...next.genres];
   statsFilter.person = next.person;
+  statsFilter.movie = next.movie;
 }
