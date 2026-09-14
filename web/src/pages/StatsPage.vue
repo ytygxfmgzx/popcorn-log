@@ -458,24 +458,6 @@ function openDateDetail(date: string): void {
           </div>
         </div>
 
-        <!-- 类型分布：热力胶囊（浓度随次数，点击看明细） -->
-        <div v-if="stats.genreDist.length" class="card block">
-          <h3 class="block-title">
-            类型分布 <i class="title-note">来自影片信息（TMDB）自动标记</i>
-          </h3>
-          <div class="heat-wrap">
-            <span
-              v-for="item in stats.genreDist"
-              :key="item.name"
-              class="heat-pill"
-              :class="heatLevel(item.count)"
-              @click="openDetail('genre', item.name)"
-            >
-              {{ item.name }}<em>{{ item.count }}</em>
-            </span>
-          </div>
-        </div>
-
         <!-- 观影习惯：星期偏好 + 电影/剧集 + 新老片 -->
         <div v-if="mediaTotal" class="card block">
           <h3 class="block-title">观影习惯</h3>
@@ -503,6 +485,45 @@ function openDateDetail(date: string): void {
             <span class="media-label">🎬 {{ stats.mediaDist.movie }} · 📺 {{ stats.mediaDist.tv }}</span>
           </div>
           <p v-if="retroLabel" class="habit-line">🕰 {{ retroLabel }}（上映满 10 年）</p>
+        </div>
+
+        <!-- 重温榜：看过 ≥2 次的真爱（点击看该片全部场次） -->
+        <div v-if="stats.rewatchBoard.length" class="card block">
+          <h3 class="block-title">重温榜 <i class="title-note">看过两次以上的真爱</i></h3>
+          <div
+            v-for="(item, index) in stats.rewatchBoard"
+            :key="`${item.mediaType}:${item.tmdbId}`"
+            class="rank-row"
+            @click="openMovieDetail(item)"
+          >
+            <span class="rank-badge">{{ rankBadge(index) }}</span>
+            <span class="rank-name">{{ item.title }}</span>
+            <span class="rank-count">×{{ item.count }} · {{ fmtWatched(item.lastWatched) }} ›</span>
+          </div>
+        </div>
+
+        <!-- 小纪录：连击 / 空窗 / 年代跨度（够有意思才出现） -->
+        <div v-if="recordLines.length" class="card block">
+          <h3 class="block-title">小纪录</h3>
+          <p v-for="(line, index) in recordLines" :key="index" class="record-line">{{ line }}</p>
+        </div>
+
+        <!-- 类型分布：热力胶囊（浓度随次数，点击看明细） -->
+        <div v-if="stats.genreDist.length" class="card block">
+          <h3 class="block-title">
+            类型分布 <i class="title-note">来自影片信息（TMDB）自动标记</i>
+          </h3>
+          <div class="heat-wrap">
+            <span
+              v-for="item in stats.genreDist"
+              :key="item.name"
+              class="heat-pill"
+              :class="heatLevel(item.count)"
+              @click="openDetail('genre', item.name)"
+            >
+              {{ item.name }}<em>{{ item.count }}</em>
+            </span>
+          </div>
         </div>
 
         <!-- 常看主创：演员/导演 TOP（去重影片数，点击看明细） -->
@@ -536,27 +557,6 @@ function openDateDetail(date: string): void {
               <span class="rank-count">{{ item.count }} 部 ›</span>
             </div>
           </template>
-        </div>
-
-        <!-- 重温榜：看过 ≥2 次的真爱（点击看该片全部场次） -->
-        <div v-if="stats.rewatchBoard.length" class="card block">
-          <h3 class="block-title">重温榜 <i class="title-note">看过两次以上的真爱</i></h3>
-          <div
-            v-for="(item, index) in stats.rewatchBoard"
-            :key="`${item.mediaType}:${item.tmdbId}`"
-            class="rank-row"
-            @click="openMovieDetail(item)"
-          >
-            <span class="rank-badge">{{ rankBadge(index) }}</span>
-            <span class="rank-name">{{ item.title }}</span>
-            <span class="rank-count">×{{ item.count }} · {{ fmtWatched(item.lastWatched) }} ›</span>
-          </div>
-        </div>
-
-        <!-- 小纪录：连击 / 空窗 / 年代跨度（够有意思才出现） -->
-        <div v-if="recordLines.length" class="card block">
-          <h3 class="block-title">小纪录</h3>
-          <p v-for="(line, index) in recordLines" :key="index" class="record-line">{{ line }}</p>
         </div>
       </template>
     </main>
